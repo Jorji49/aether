@@ -1,0 +1,113 @@
+{
+  "name": "aether",
+  "displayName": "Aether",
+  "description": "Local AI prompt optimizer — transforms rough ideas into perfect prompts. Powered by Ollama.",
+  "version": "1.0.0",
+  "publisher": "aether-labs",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Machine Learning",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aether-sidebar",
+          "title": "Aether",
+          "icon": "media/aether-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aether-sidebar": [
+        {
+          "type": "webview",
+          "id": "aether.vibePanel",
+          "name": "Aether"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aether.sendVibe",
+        "title": "Aether: Send Vibe"
+      },
+      {
+        "command": "aether.startBrain",
+        "title": "Aether: Start Brain"
+      },
+      {
+        "command": "aether.sendToAgent",
+        "title": "Aether: Send to Agent"
+      }
+    ],
+    "configuration": {
+      "title": "Aether",
+      "properties": {
+        "aether.brainServerUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:8420",
+          "description": "URL of the Aether Brain server. Change only if running Brain on a different machine or port.",
+          "order": 1
+        },
+        "aether.ollamaModel": {
+          "type": "string",
+          "default": "gemma2:2b",
+          "description": "Ollama model used for prompt generation. Smaller models (gemma2:2b, gemma3:1b) are faster. Larger models (phi4, llama3.1:8b) produce higher quality prompts. You can change this from the model selector in the sidebar.",
+          "order": 2
+        },
+        "aether.maxContextFiles": {
+          "type": "number",
+          "default": 30,
+          "description": "Maximum number of project files to scan for context. Higher values give more context but slower generation. Recommended: 20-50.",
+          "minimum": 5,
+          "maximum": 100,
+          "order": 3
+        },
+        "aether.autoSendToAgent": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically send the generated prompt to the AI agent after generation. When disabled, use the 'Send to Agent' button manually.",
+          "order": 4
+        },
+        "aether.ollamaTemperature": {
+          "type": "number",
+          "default": 0.1,
+          "description": "Temperature for prompt generation (0.0-1.0). Lower = more focused and consistent prompts. Higher = more creative and varied. Recommended: 0.1 for coding prompts.",
+          "minimum": 0,
+          "maximum": 1,
+          "order": 5
+        },
+        "aether.ollamaMaxTokens": {
+          "type": "number",
+          "default": 1024,
+          "description": "Maximum tokens (words) for generated prompts. Higher values allow longer, more detailed prompts. Recommended: 768-1024 for most tasks, 1536+ for complex architecture prompts.",
+          "minimum": 256,
+          "maximum": 4096,
+          "order": 6
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "eslint": "^9.0.0",
+    "typescript": "^5.7.0"
+  },
+  "dependencies": {}
+}

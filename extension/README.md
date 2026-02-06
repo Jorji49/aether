@@ -7,7 +7,7 @@
 
 ## Features
 
-- **Vibe-to-Prompt**: Type a rough idea like "login sayfası yap" and get a fully structured, production-ready AI prompt
+- **Vibe-to-Prompt**: Type a rough idea like "create a login page" and get a fully structured, production-ready AI prompt
 - **100% Local & Private**: Runs entirely on your machine via Ollama — no data leaves your computer
 - **Multi-IDE Support**: Works with Cursor, Windsurf, Claude Code, GitHub Copilot, and VS Code
 - **Smart Context Scanning**: Automatically analyzes your project structure for context-aware prompts

@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("aether.sendVibe", async () => {
       const input = await vscode.window.showInputBox({
         prompt: "Enter your vibe...",
-        placeHolder: "e.g. login sayfası yap, dark mode ekle",
+        placeHolder: "e.g. create a login page, add dark mode",
       });
       if (input) { await sidebarProvider.handleVibe(input); }
     })
@@ -38,32 +38,61 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("aether.startBrain", async () => {
-      // Find brain folder: try workspace root, then extension parent
+      // Find brain folder: try multiple locations
       let brainPath = "";
+      const fs = await import("fs");
+      const path = await import("path");
+      const hasBrain = (dir: string) => fs.existsSync(path.join(dir, "sslm_engine.py"));
+
+      // 1. Workspace root /brain
       const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (ws) {
-        const fs = await import("fs");
-        const path = await import("path");
-        const candidate = path.join(ws, "brain");
-        if (fs.existsSync(path.join(candidate, "sslm_engine.py"))) {
-          brainPath = candidate;
-        }
-      }
-      if (!brainPath) {
-        const extDir = context.extensionUri.fsPath;
-        const fs = await import("fs");
-        const path = await import("path");
-        const candidate = path.join(path.dirname(extDir), "brain");
-        if (fs.existsSync(path.join(candidate, "sslm_engine.py"))) {
-          brainPath = candidate;
-        }
+      if (ws && hasBrain(path.join(ws, "brain"))) {
+        brainPath = path.join(ws, "brain");
       }
 
+      // 2. Extension's parent directory /brain (dev mode)
       if (!brainPath) {
-        vscode.window.showErrorMessage(
-          "Brain klasörü bulunamadı. Projeyi workspace olarak açtığınızdan emin olun."
+        const extDir = context.extensionUri.fsPath;
+        const candidate = path.join(path.dirname(extDir), "brain");
+        if (hasBrain(candidate)) { brainPath = candidate; }
+      }
+
+      // 3. Extension's own directory /brain (bundled)
+      if (!brainPath) {
+        const candidate = path.join(context.extensionUri.fsPath, "brain");
+        if (hasBrain(candidate)) { brainPath = candidate; }
+      }
+
+      // 4. User home ~/aether/brain
+      if (!brainPath) {
+        const home = process.env.USERPROFILE || process.env.HOME || "";
+        const candidate = path.join(home, "aether", "brain");
+        if (hasBrain(candidate)) { brainPath = candidate; }
+      }
+
+      // 5. Ask the user to locate it manually
+      if (!brainPath) {
+        const pick = await vscode.window.showErrorMessage(
+          "Brain folder not found. Open the Aether project as your workspace, or select the brain folder manually.",
+          "Browse..."
         );
-        return;
+        if (pick === "Browse...") {
+          const result = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: "Select brain folder",
+          });
+          if (result?.[0]) {
+            const sel = result[0].fsPath;
+            if (hasBrain(sel)) { brainPath = sel; }
+            else {
+              vscode.window.showErrorMessage("Selected folder does not contain sslm_engine.py.");
+              return;
+            }
+          }
+        }
+        if (!brainPath) { return; }
       }
 
       // ── Start Ollama in background if not already running ─────────
@@ -94,7 +123,7 @@ export function activate(context: vscode.ExtensionContext): void {
       terminal.sendText(
         `${cdCmd}${sep}pip install -r requirements.txt --quiet${sep}${waitCmd}${sep}python sslm_engine.py`
       );
-      vscode.window.showInformationMessage("Ollama + Brain başlatılıyor — :8420...");
+      vscode.window.showInformationMessage("Starting Ollama + Brain server on :8420...");
       sidebarProvider.updateBrainStatus(false, true); // starting state
     })
   );

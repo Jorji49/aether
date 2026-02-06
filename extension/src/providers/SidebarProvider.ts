@@ -387,7 +387,7 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
 <div class="offline-banner" id="OB">
   <div class="ob-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div>
   <div class="ob-title">Brain Server Offline</div>
-  <div class="ob-desc">Aether Brain sunucusu çalışmıyor.<br/>Tek tıkla başlatabilirsiniz.</div>
+  <div class="ob-desc">Aether Brain server is not running.<br/>Click below to start it.</div>
   <button class="start-brain-btn" id="bStartBrain">
     <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
     <span id="bStartTxt">Start Brain Server</span>

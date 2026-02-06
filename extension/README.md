@@ -2,7 +2,7 @@
 
 > Transform rough ideas into perfect AI prompts. Powered by local Ollama models — your data stays private.
 
-![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/AhmetKayraKama.aether)
+![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/AhmetKayraKama.aether-prompt-generator)
 ![License](https://img.shields.io/github/license/Jorji49/aether)
 
 ## Features

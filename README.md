@@ -20,7 +20,7 @@ Transform rough ideas ("vibes") into perfect, AI-optimized prompts. Powered by *
 
 ### Installation
 
-1. Install from VS Code Marketplace: Search "Aether" or [click here](https://marketplace.visualstudio.com/items?itemName=AhmetKayraKama.aether)
+1. Install from VS Code Marketplace: Search "Aether" or [click here](https://marketplace.visualstudio.com/items?itemName=AhmetKayraKama.aether-prompt-generator)
 2. Start the Aether Brain backend:
    ```bash
    cd brain

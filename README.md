@@ -20,7 +20,7 @@ Transform rough ideas ("vibes") into perfect, AI-optimized prompts. Powered by *
 
 ### Installation
 
-1. Install from VS Code Marketplace: Search "Aether" or [click here](https://marketplace.visualstudio.com/items?itemName=kama.aether)
+1. Install from VS Code Marketplace: Search "Aether" or [click here](https://marketplace.visualstudio.com/items?itemName=AhmetKayraKama.aether)
 2. Start the Aether Brain backend:
    ```bash
    cd brain
@@ -101,4 +101,4 @@ Built on top of:
 - [FastAPI](https://fastapi.tiangolo.com) — Backend framework
 - Prompt patterns from [prompts.chat](https://prompts.chat) community
 
-Made with love by kama
+Made with love by AhmetKayraKama

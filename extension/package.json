@@ -3,7 +3,7 @@
   "displayName": "Aether - AI Prompt Optimizer",
   "description": "Transform rough ideas into perfect AI prompts. Powered by local Ollama models - your data stays private.",
   "version": "1.0.0",
-  "publisher": "kama",
+  "publisher": "AhmetKayraKama",
   "icon": "media/aether-icon.png",
   "repository": {
     "type": "git",

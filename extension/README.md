@@ -2,10 +2,10 @@
 
 > Transform rough ideas into perfect AI prompts. Powered by local Ollama models — your data stays private.
 
-![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/kama.aether)
+![Visual Studio Marketplace](https://img.shields.io/visual-studio-marketplace/v/AhmetKayraKama.aether)
 ![License](https://img.shields.io/github/license/Jorji49/aether)
 
-## ✨ Features
+## Features
 
 - **Vibe-to-Prompt**: Type a rough idea like "login sayfası yap" and get a fully structured, production-ready AI prompt
 - **100% Local & Private**: Runs entirely on your machine via Ollama — no data leaves your computer
@@ -17,7 +17,7 @@
 - **One-Click Model Management**: Download, switch, and manage Ollama models from the sidebar
 - **Send to Agent**: Instantly send generated prompts to your IDE's AI assistant
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -36,7 +36,7 @@
 5. Select a model in the Welcome screen (recommended: **gemma3:4b**)
 6. Start typing your ideas!
 
-## 🎯 How It Works
+## How It Works
 
 ```
 Your Idea → Aether Brain → Ollama (Local LLM) → Optimized Prompt → Your AI Agent
@@ -48,7 +48,7 @@ Your Idea → Aether Brain → Ollama (Local LLM) → Optimized Prompt → Your 
 4. **Quality Auditor** scores the output and checks for security issues
 5. **One click** sends the prompt to your AI agent (Cursor, Copilot, etc.)
 
-## ⚙️ Configuration
+## Configuration
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -59,7 +59,7 @@ Your Idea → Aether Brain → Ollama (Local LLM) → Optimized Prompt → Your 
 | `aether.ollamaTemperature` | `0.1` | Generation temperature (0.0–1.0) |
 | `aether.ollamaMaxTokens` | `1024` | Max tokens for generated prompts |
 
-## 📦 Recommended Models
+## Recommended Models
 
 | Model | Size | Speed | Quality | Best For |
 |-------|------|-------|---------|----------|
@@ -69,7 +69,7 @@ Your Idea → Aether Brain → Ollama (Local LLM) → Optimized Prompt → Your 
 | phi4 | 9.1 GB | ⚡ | ⭐⭐⭐⭐ | Highest quality |
 | llama3.1:8b | 4.7 GB | ⚡ | ⭐⭐⭐⭐ | Strong general use |
 
-## 🔒 Privacy
+## Privacy
 
 Aether is designed with privacy as a core principle:
 
@@ -78,7 +78,7 @@ Aether is designed with privacy as a core principle:
 - **No API keys needed** — Works entirely with local Ollama models
 - **Your code stays yours** — Context scanning is local-only
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 aether/
@@ -97,7 +97,7 @@ aether/
         └── utils/config.ts              # Settings
 ```
 
-## 📝 Commands
+## Commands
 
 | Command | Description |
 |---------|-------------|
@@ -105,7 +105,7 @@ aether/
 | `Aether: Start Brain` | Start the Ollama + Brain server |
 | `Aether: Send to Agent` | Send a prompt to your AI assistant |
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
 ### Brain server won't start
 - Make sure Python 3.10+ is installed: `python --version`
@@ -120,6 +120,6 @@ aether/
 - Check the Brain server URL in settings
 - The extension auto-discovers ports 8420–8429
 
-## 📄 License
+## License
 
-MIT © [kama](https://github.com/Jorji49)
+MIT © [AhmetKayraKama](https://github.com/Jorji49)

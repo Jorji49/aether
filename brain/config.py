@@ -20,7 +20,11 @@ if _ENV_PATH.exists():
 
 
 class Settings:
-    """Immutable runtime settings resolved once at import time."""
+    """Runtime settings resolved at import time from environment variables.
+
+    Note: OLLAMA_MODEL may be changed at runtime via the /model endpoint.
+    All other fields should be treated as read-only after initialization.
+    """
 
     # ── Ollama (local model for prompt generation) ────────────────────
     OLLAMA_HOST: str = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")

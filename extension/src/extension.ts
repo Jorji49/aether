@@ -8,14 +8,12 @@
 import * as vscode from "vscode";
 import { SidebarProvider } from "./providers/SidebarProvider";
 import { BrainClient } from "./services/BrainClient";
+import { AetherConfig } from "./utils/config";
 
 let brainClient: BrainClient;
 
 export function activate(context: vscode.ExtensionContext): void {
-  const config = vscode.workspace.getConfiguration("aether");
-  const brainUrl = config.get<string>("brainServerUrl", "http://127.0.0.1:8420");
-
-  brainClient = new BrainClient(brainUrl);
+  brainClient = new BrainClient(AetherConfig.brainServerUrl);
   const sidebarProvider = new SidebarProvider(context.extensionUri, brainClient, context);
 
   // ── Register Sidebar ──────────────────────────────────────────────
@@ -39,11 +37,65 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("aether.startBrain", () => {
-      const terminal = vscode.window.createTerminal("Aether Brain");
+    vscode.commands.registerCommand("aether.startBrain", async () => {
+      // Find brain folder: try workspace root, then extension parent
+      let brainPath = "";
+      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (ws) {
+        const fs = await import("fs");
+        const path = await import("path");
+        const candidate = path.join(ws, "brain");
+        if (fs.existsSync(path.join(candidate, "sslm_engine.py"))) {
+          brainPath = candidate;
+        }
+      }
+      if (!brainPath) {
+        const extDir = context.extensionUri.fsPath;
+        const fs = await import("fs");
+        const path = await import("path");
+        const candidate = path.join(path.dirname(extDir), "brain");
+        if (fs.existsSync(path.join(candidate, "sslm_engine.py"))) {
+          brainPath = candidate;
+        }
+      }
+
+      if (!brainPath) {
+        vscode.window.showErrorMessage(
+          "Brain klasörü bulunamadı. Projeyi workspace olarak açtığınızdan emin olun."
+        );
+        return;
+      }
+
+      // ── Start Ollama in background if not already running ─────────
+      const isWin = process.platform === "win32";
+      try {
+        const cp = await import("child_process");
+        if (isWin) {
+          // Silently start ollama serve in background (no window)
+          cp.exec('tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /i "ollama.exe" >nul || start /B ollama serve', { windowsHide: true });
+        } else {
+          cp.exec('pgrep -x ollama > /dev/null 2>&1 || (ollama serve > /dev/null 2>&1 &)');
+        }
+      } catch {
+        // Ollama start failed — Brain will show its own error
+      }
+
+      // ── Start Brain server ────────────────────────────────────────
+      const existing = vscode.window.terminals.find(t => t.name === "Aether Brain");
+      const terminal = existing ?? vscode.window.createTerminal({
+        name: "Aether Brain",
+      });
       terminal.show();
-      terminal.sendText("cd brain && python sslm_engine.py");
-      vscode.window.showInformationMessage("Aether Brain starting on :8420...");
+
+      const sep = isWin ? " ; " : " && ";
+      const cdCmd = isWin ? `cd "${brainPath}"` : `cd '${brainPath}'`;
+      // Small delay to let Ollama start before Brain connects
+      const waitCmd = isWin ? "Start-Sleep -Seconds 2" : "sleep 2";
+      terminal.sendText(
+        `${cdCmd}${sep}pip install -r requirements.txt --quiet${sep}${waitCmd}${sep}python sslm_engine.py`
+      );
+      vscode.window.showInformationMessage("Ollama + Brain başlatılıyor — :8420...");
+      sidebarProvider.updateBrainStatus(false, true); // starting state
     })
   );
 

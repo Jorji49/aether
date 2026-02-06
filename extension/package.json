@@ -1,20 +1,43 @@
 {
   "name": "aether",
-  "displayName": "Aether",
-  "description": "Local AI prompt optimizer — transforms rough ideas into perfect prompts. Powered by Ollama.",
+  "displayName": "Aether - AI Prompt Optimizer",
+  "description": "Transform rough ideas into perfect AI prompts. Powered by local Ollama models - your data stays private.",
   "version": "1.0.0",
-  "publisher": "aether-labs",
+  "publisher": "kama",
+  "icon": "media/aether-icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jorji49/aether"
+  },
+  "homepage": "https://github.com/Jorji49/aether#readme",
+  "bugs": {
+    "url": "https://github.com/Jorji49/aether/issues"
+  },
+  "license": "MIT",
   "engines": {
     "vscode": "^1.96.0"
+  },
+  "galleryBanner": {
+    "color": "#000000",
+    "theme": "dark"
   },
   "categories": [
     "Programming Languages",
     "Machine Learning",
     "Other"
   ],
-  "activationEvents": [
-    "onStartupFinished"
+  "keywords": [
+    "ai",
+    "prompt",
+    "ollama",
+    "claude",
+    "gpt",
+    "gemini",
+    "prompt-engineering",
+    "local-ai",
+    "privacy"
   ],
+  "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
@@ -61,7 +84,7 @@
         "aether.ollamaModel": {
           "type": "string",
           "default": "gemma2:2b",
-          "description": "Ollama model used for prompt generation. Smaller models (gemma2:2b, gemma3:1b) are faster. Larger models (phi4, llama3.1:8b) produce higher quality prompts. You can change this from the model selector in the sidebar.",
+          "description": "Ollama model used for prompt generation. Smaller models (gemma2:2b, gemma3:1b) are faster. Larger models (phi4, llama3.1:8b) produce higher quality prompts.",
           "order": 2
         },
         "aether.maxContextFiles": {
@@ -75,13 +98,13 @@
         "aether.autoSendToAgent": {
           "type": "boolean",
           "default": false,
-          "description": "Automatically send the generated prompt to the AI agent after generation. When disabled, use the 'Send to Agent' button manually.",
+          "description": "Automatically send the generated prompt to the AI agent after generation.",
           "order": 4
         },
         "aether.ollamaTemperature": {
           "type": "number",
           "default": 0.1,
-          "description": "Temperature for prompt generation (0.0-1.0). Lower = more focused and consistent prompts. Higher = more creative and varied. Recommended: 0.1 for coding prompts.",
+          "description": "Temperature for prompt generation (0.0-1.0). Lower = more focused. Recommended: 0.1 for coding prompts.",
           "minimum": 0,
           "maximum": 1,
           "order": 5
@@ -89,7 +112,7 @@
         "aether.ollamaMaxTokens": {
           "type": "number",
           "default": 1024,
-          "description": "Maximum tokens (words) for generated prompts. Higher values allow longer, more detailed prompts. Recommended: 768-1024 for most tasks, 1536+ for complex architecture prompts.",
+          "description": "Maximum tokens for generated prompts. Recommended: 768-1024 for most tasks, 1536+ for complex prompts.",
           "minimum": 256,
           "maximum": 4096,
           "order": 6
@@ -101,13 +124,15 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts"
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",
-    "eslint": "^9.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^8.57.0",
     "typescript": "^5.7.0"
-  },
-  "dependencies": {}
+  }
 }

@@ -1,25 +1,32 @@
+# Node
+node_modules/
+out/
+*.vsix
+
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.egg-info/
-dist/
-build/
-*.egg
-.venv/
 venv/
-env/
+.venv/
+.env
+.env.local
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
 
-# Node.js
-node_modules/
-out/
+# VS Code
+.vscode/settings.json
+.vscode/launch.json
 
 # IDE
-.vscode/
 .idea/
-*.swp
-*.swo
 
 # OS
-Thumbs.db
 .DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*

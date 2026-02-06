@@ -29,6 +29,6 @@ export const AetherConfig = {
   },
 
   get autoSendToAgent(): boolean {
-    return getConfig("autoSendToAgent", true);
+    return getConfig("autoSendToAgent", false);
   },
 } as const;

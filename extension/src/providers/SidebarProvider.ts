@@ -70,11 +70,16 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           await this._ctx.globalState.update("aether.agent", this._selectedAgent);
           await this._ctx.globalState.update("aether.family", this._selectedFamily);
           break;
+        case "startBrain":
+          await vscode.commands.executeCommand("aether.startBrain");
+          break;
       }
     });
   }
 
-  public updateBrainStatus(online: boolean): void { this._post({ command: "status", online }); }
+  public updateBrainStatus(online: boolean, starting: boolean = false): void {
+    this._post({ command: "status", online, starting });
+  }
 
   public async handleVibe(vibe: string): Promise<void> {
     const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
@@ -102,15 +107,35 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  // Static catalog — used as fallback when Brain is offline
+  private static readonly FALLBACK_CATALOG = [
+    { name: "gemma3:4b", desc: "\u2B50 Best Pick \u2014 Great quality/speed balance.", size: "3.3 GB", installed: false },
+    { name: "gemma2:2b", desc: "\u26A1 Fast \u2014 Quick prompt generation, low RAM.", size: "1.6 GB", installed: false },
+    { name: "gemma3:1b", desc: "\u26A1 Ultra fast \u2014 Minimal RAM. Quick iterations.", size: "815 MB", installed: false },
+    { name: "qwen2.5:1.5b", desc: "Efficient multilingual. Turkish/English.", size: "986 MB", installed: false },
+    { name: "llama3.2:3b", desc: "Good speed/quality balance.", size: "2.0 GB", installed: false },
+    { name: "llama3.2:1b", desc: "Tiny, instant responses. Simple prompts.", size: "1.3 GB", installed: false },
+    { name: "codegemma:2b", desc: "Code specialist. Tech-aware prompts.", size: "1.6 GB", installed: false },
+    { name: "deepseek-r1:1.5b", desc: "Reasoning-focused. Logic-heavy prompts.", size: "1.1 GB", installed: false },
+    { name: "gemma2", desc: "Strong 7B. High quality, moderate speed.", size: "5.4 GB", installed: false },
+    { name: "phi4", desc: "Best reasoning. Top quality, needs 12GB+ RAM.", size: "9.1 GB", installed: false },
+    { name: "llama3.1:8b", desc: "Powerful 8B. Excellent quality, needs 8GB+ RAM.", size: "4.7 GB", installed: false },
+    { name: "mistral", desc: "Versatile 7B. Reliable quality.", size: "4.1 GB", installed: false },
+    { name: "qwen2.5:7b", desc: "Strong multilingual 7B. Non-English prompts.", size: "4.7 GB", installed: false },
+    { name: "deepseek-r1:7b", desc: "Advanced reasoning. Complex architectures.", size: "4.7 GB", installed: false },
+    { name: "codellama:7b", desc: "Code specialist 7B. Deep understanding.", size: "3.8 GB", installed: false },
+  ];
+
   private async _loadAll(): Promise<void> {
     try {
       const [installed, catalog] = await Promise.all([
         this._brain.listModels().catch(() => ({ models: [], current: "" })),
-        this._brain.catalogModels().catch(() => ({ catalog: [] })),
+        this._brain.catalogModels().catch(() => ({ catalog: [] as { name: string; desc: string; size: string; installed: boolean }[] })),
       ]);
-      this._post({ command: "allModels", installed: installed.models, current: installed.current, catalog: catalog.catalog });
+      const cat = catalog.catalog?.length ? catalog.catalog : SidebarProvider.FALLBACK_CATALOG;
+      this._post({ command: "allModels", installed: installed.models, current: installed.current, catalog: cat });
     } catch {
-      this._post({ command: "allModels", installed: [], current: "", catalog: [], error: "Cannot reach Ollama" });
+      this._post({ command: "allModels", installed: [], current: "", catalog: SidebarProvider.FALLBACK_CATALOG });
     }
   }
 
@@ -303,6 +328,18 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
 .foot{padding:5px 16px 7px;font-size:9px;color:var(--t4);display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)}
 .foot-model{font-family:var(--m);cursor:pointer;padding:2px 6px;border-radius:4px;transition:.15s}
 .foot-model:hover{background:var(--s2);color:var(--t3)}
+
+/* ── Offline Banner ─────────────────── */
+.offline-banner{display:none;padding:16px 20px;background:linear-gradient(135deg,var(--s1),var(--s2));border-bottom:1px solid var(--border);text-align:center;animation:fi .2s ease}
+.offline-banner.show{display:block}
+.offline-banner .ob-icon{margin-bottom:8px;color:var(--t4)}
+.offline-banner .ob-title{font-size:13px;font-weight:600;color:var(--t);margin-bottom:4px}
+.offline-banner .ob-desc{font-size:11px;color:var(--t3);line-height:1.5;margin-bottom:12px}
+.start-brain-btn{width:100%;padding:10px 16px;border-radius:var(--r);border:none;background:var(--ok);color:#000;font-size:12px;font-weight:700;cursor:pointer;transition:.15s;font-family:var(--f);display:flex;align-items:center;justify-content:center;gap:8px}
+.start-brain-btn:hover{opacity:.85}
+.start-brain-btn:disabled{opacity:.4;cursor:default}
+.start-brain-btn.starting{background:var(--blue);color:#fff}
+.start-brain-btn svg{width:14px;height:14px}
 </style>
 </head>
 <body>
@@ -346,6 +383,17 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   </div>
 </div>
 
+<!-- Offline Banner -->
+<div class="offline-banner" id="OB">
+  <div class="ob-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div>
+  <div class="ob-title">Brain Server Offline</div>
+  <div class="ob-desc">Aether Brain sunucusu çalışmıyor.<br/>Tek tıkla başlatabilirsiniz.</div>
+  <button class="start-brain-btn" id="bStartBrain">
+    <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+    <span id="bStartTxt">Start Brain Server</span>
+  </button>
+</div>
+
 <!-- Chat View -->
 <div class="view active" id="V_CHAT">
   <div class="feed" id="F">
@@ -378,8 +426,9 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   var vs=acquireVsCodeApi();
   function $(id){return document.getElementById(id)}
   var F=$('F'),E=$('E'),I=$('I'),G=$('G'),LDR=$('LDR'),LTM=$('LTM'),D=$('D'),SL=$('SL'),FM=$('FM');
-  var VS=$('V_SETUP'),VC=$('V_CHAT');
+  var VS=$('V_SETUP'),VC=$('V_CHAT'),OB=$('OB');
   var AB=$('AB'),AP=$('AP'),AW=$('AW');
+  var brainStarting=false;
   var busy=0,ti=null,t0=0,hist=[],selModel='';
   var curAgent='auto',curFamily='auto',panelOpen=false;
 
@@ -426,7 +475,7 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
       h+='<div class="ag-hdr"><span class="ag-dot" style="background:'+g.c+'"></span>'+g.l+'</div>';
       for(var ai=0;ai<g.a.length;ai++){
         var a=g.a[ai];
-        h+='<div class="ag-i'+(curAgent===a.i?' sel':'')+'" data-aid="'+a.i+'" data-fam="'+a.f+'">';
+        h+='<div class="ag-i'+(curAgent===a.i?' sel':'')+'" data-aid="'+escAttr(a.i)+'" data-fam="'+escAttr(a.f)+'">';
         h+='<div class="ag-i-ck"></div>';
         h+='<div class="ag-i-n">'+esc(a.n)+'</div>';
         h+='<div class="ag-i-d">'+esc(a.d)+'</div>';
@@ -490,6 +539,15 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   G.addEventListener('click',go);
   $('bStop').addEventListener('click',function(){vs.postMessage({command:'stop'})});
   $('bSet').addEventListener('click',function(){vs.postMessage({command:'settings'})});
+  $('bStartBrain').addEventListener('click',function(){
+    if(brainStarting)return;
+    brainStarting=true;
+    var btn=$('bStartBrain');
+    btn.classList.add('starting');
+    $('bStartTxt').textContent='Starting...';
+    btn.disabled=true;
+    vs.postMessage({command:'startBrain'});
+  });
   $('bClr').addEventListener('click',function(){
     F.innerHTML='';F.appendChild(E);E.style.display='flex';hist=[];
     vs.postMessage({command:'save',h:[]});
@@ -513,6 +571,7 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   function lock(){busy=1;I.disabled=true;G.disabled=true;LDR.classList.add('on');t0=Date.now();ti=setInterval(function(){LTM.textContent=((Date.now()-t0)/1000|0)+'s'},300)}
   function unlock(){busy=0;I.disabled=false;G.disabled=false;LDR.classList.remove('on');if(ti){clearInterval(ti);ti=null}LTM.textContent='0s';I.focus()}
   function esc(s){var d=document.createElement('div');d.textContent=s||'';return d.innerHTML}
+  function escAttr(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
   function sb(){requestAnimationFrame(function(){F.scrollTop=F.scrollHeight})}
   function hl(t){var h=esc(t);h=h.replace(/^(##? .+)$/gm,'<span class="h">$1</span>');return h}
 
@@ -605,7 +664,7 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
       var el=document.createElement('div');el.className='mi';
       var act='';
       if(m.installed){act='<div class="mi-action"><span class="dl-btn done">Installed</span></div>'}
-      else{act='<div class="mi-action"><button class="dl-btn" data-pull="'+esc(m.name)+'">Download</button></div>'}
+      else{act='<div class="mi-action"><button class="dl-btn" data-pull="'+escAttr(m.name)+'">Download</button></div>'}
       el.innerHTML='<div class="mi-info"><div class="mi-name">'+esc(m.name)+'</div><div class="mi-desc">'+esc(m.desc)+'</div></div><div class="mi-size">'+esc(m.size)+'</div>'+act;
       c.appendChild(el);
     });
@@ -618,7 +677,20 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
     else if(m.command==='err'){addE(m.msg);unlock()}
     else if(m.command==='stopped'){unlock()}
     else if(m.command==='loading'&&!m.on){unlock()}
-    else if(m.command==='status'){D.className='dot '+(m.online?'on':'off');SL.textContent=m.online?'Connected':'Offline'}
+    else if(m.command==='status'){
+      D.className='dot '+(m.online?'on':'off');
+      SL.textContent=m.online?'Connected':(m.starting?'Starting...':'Offline');
+      if(m.online){
+        OB.classList.remove('show');
+        brainStarting=false;
+        var btn=$('bStartBrain');
+        btn.classList.remove('starting');
+        btn.disabled=false;
+        $('bStartTxt').textContent='Start Brain Server';
+      } else if(!m.starting){
+        OB.classList.add('show');
+      }
+    }
     else if(m.command==='showSetup'){showView('setup');vs.postMessage({command:'loadModels'})}
     else if(m.command==='allModels'){
       renderInstalled(m.installed||[],m.current||'');

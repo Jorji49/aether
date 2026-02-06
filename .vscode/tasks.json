@@ -1,0 +1,73 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "compile-extension",
+      "type": "shell",
+      "command": "npm run compile",
+      "options": {
+        "cwd": "${workspaceFolder}/extension"
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "watch-extension",
+      "type": "shell",
+      "command": "npm run watch",
+      "options": {
+        "cwd": "${workspaceFolder}/extension"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "silent",
+        "panel": "dedicated"
+      },
+      "problemMatcher": ["$tsc-watch"]
+    },
+    {
+      "label": "start-brain",
+      "type": "shell",
+      "command": "python -m uvicorn sslm_engine:app --host 127.0.0.1 --port 8420 --reload",
+      "options": {
+        "cwd": "${workspaceFolder}/brain"
+      },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "install-all",
+      "dependsOn": ["install-extension-deps", "install-brain-deps"],
+      "problemMatcher": []
+    },
+    {
+      "label": "install-extension-deps",
+      "type": "shell",
+      "command": "npm install",
+      "options": {
+        "cwd": "${workspaceFolder}/extension"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "install-brain-deps",
+      "type": "shell",
+      "command": "pip install -r requirements.txt",
+      "options": {
+        "cwd": "${workspaceFolder}/brain"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

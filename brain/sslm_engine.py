@@ -18,6 +18,7 @@ import re
 import time
 import json
 import queue
+import uuid
 from collections import defaultdict
 
 import ollama as ollama_client
@@ -51,14 +52,11 @@ log = logging.getLogger("brain")
 app = FastAPI(title="Aether Brain", version="3.0.0")
 
 # ── Security: CORS restricted to localhost + VS Code extension origins ──
-_ALLOWED_ORIGINS = [
-    "http://127.0.0.1:*",
-    "http://localhost:*",
-    "vscode-webview://*",
-]
+# Note: allow_origins expects exact strings or "*". Port-wildcards are not
+# supported, so we rely on allow_origin_regex for flexible matching.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_ALLOWED_ORIGINS,
+    allow_origins=[],
     allow_origin_regex=r"^(https?://(127\.0\.0\.1|localhost)(:\d+)?|vscode-webview://.*)$",
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "Accept"],
@@ -66,17 +64,28 @@ app.add_middleware(
 )
 
 
-# ── Security: Rate limiting (simple in-memory) ──
+# ── Security: Rate limiting (per-client, in-memory) ──
 
 _rate_limits: dict[str, list[float]] = defaultdict(list)
 _RATE_WINDOW = 60.0   # seconds
 _RATE_MAX_VIBE = 30   # max vibe requests per window
 _RATE_MAX_GENERAL = 120  # max general requests per window
+_RATE_CLEANUP_INTERVAL = 300.0  # seconds between full cleanups
+_rate_last_cleanup = 0.0
 
 
 def _check_rate(key: str, limit: int) -> bool:
     """Return True if request is allowed, False if rate-limited."""
+    global _rate_last_cleanup
     now = time.monotonic()
+
+    # Periodic full cleanup to prevent memory leak from stale keys
+    if now - _rate_last_cleanup > _RATE_CLEANUP_INTERVAL:
+        stale = [k for k, v in _rate_limits.items() if not v or now - v[-1] > _RATE_WINDOW]
+        for k in stale:
+            del _rate_limits[k]
+        _rate_last_cleanup = now
+
     bucket = _rate_limits[key]
     # Prune old entries
     _rate_limits[key] = [t for t in bucket if now - t < _RATE_WINDOW]
@@ -259,6 +268,9 @@ async def list_models():
         for m in raw:
             name = m.get("name", "") if isinstance(m, dict) else getattr(m, "model", getattr(m, "name", ""))
             size = m.get("size", 0) if isinstance(m, dict) else getattr(m, "size", 0)
+            # Normalize: strip ':latest' suffix for consistent display
+            if name.endswith(":latest"):
+                name = name[:-7]
             models.append({"name": name, "size_mb": round(size / 1048576)})
         return {"models": models, "current": settings.OLLAMA_MODEL}
     except Exception as e:
@@ -269,19 +281,22 @@ async def list_models():
 @app.get("/models/available")
 async def available_models():
     catalog = [
-        {"name": "gemma2:2b", "desc": "⚡ Recommended — Fast prompt generation, low RAM.", "size": "1.6 GB"},
-        {"name": "gemma3:4b", "desc": "⚡ Recommended — Great quality/speed balance.", "size": "3.3 GB"},
-        {"name": "gemma3:1b", "desc": "Ultra fast, minimal RAM. Quick iterations.", "size": "815 MB"},
-        {"name": "llama3.2:1b", "desc": "Tiny, instant responses. Simple prompts.", "size": "1.3 GB"},
+        # ── Recommended (best value) ──
+        {"name": "gemma3:4b", "desc": "⭐ Best Pick — Great quality/speed balance.", "size": "3.3 GB"},
+        {"name": "gemma2:2b", "desc": "⚡ Fast — Quick prompt generation, low RAM.", "size": "1.6 GB"},
+        {"name": "gemma3:1b", "desc": "⚡ Ultra fast — Minimal RAM. Quick iterations.", "size": "815 MB"},
+        # ── Good alternatives (small) ──
         {"name": "qwen2.5:1.5b", "desc": "Efficient multilingual. Turkish/English.", "size": "986 MB"},
-        {"name": "deepseek-r1:1.5b", "desc": "Reasoning-focused. Logic-heavy prompts.", "size": "1.1 GB"},
-        {"name": "gemma2", "desc": "Strong 7B. High quality, moderate speed.", "size": "5.4 GB"},
         {"name": "llama3.2:3b", "desc": "Good speed/quality balance.", "size": "2.0 GB"},
+        {"name": "llama3.2:1b", "desc": "Tiny, instant responses. Simple prompts.", "size": "1.3 GB"},
         {"name": "codegemma:2b", "desc": "Code specialist. Tech-aware prompts.", "size": "1.6 GB"},
-        {"name": "llama3.1:8b", "desc": "Powerful 8B. Excellent quality, needs 8GB+ RAM.", "size": "4.7 GB"},
+        {"name": "deepseek-r1:1.5b", "desc": "Reasoning-focused. Logic-heavy prompts.", "size": "1.1 GB"},
+        # ── Advanced (bigger, higher quality, more RAM) ──
+        {"name": "gemma2", "desc": "Strong 7B. High quality, moderate speed.", "size": "5.4 GB"},
         {"name": "phi4", "desc": "Best reasoning. Top quality, needs 12GB+ RAM.", "size": "9.1 GB"},
-        {"name": "qwen2.5:7b", "desc": "Strong multilingual 7B. Non-English prompts.", "size": "4.7 GB"},
+        {"name": "llama3.1:8b", "desc": "Powerful 8B. Excellent quality, needs 8GB+ RAM.", "size": "4.7 GB"},
         {"name": "mistral", "desc": "Versatile 7B. Reliable quality.", "size": "4.1 GB"},
+        {"name": "qwen2.5:7b", "desc": "Strong multilingual 7B. Non-English prompts.", "size": "4.7 GB"},
         {"name": "deepseek-r1:7b", "desc": "Advanced reasoning. Complex architectures.", "size": "4.7 GB"},
         {"name": "codellama:7b", "desc": "Code specialist 7B. Deep understanding.", "size": "3.8 GB"},
     ]
@@ -292,12 +307,14 @@ async def available_models():
         for m in raw:
             n = m.get("name", "") if isinstance(m, dict) else getattr(m, "model", getattr(m, "name", ""))
             installed_names.add(n)
-            if ":" in n:
-                installed_names.add(n.split(":")[0])
+            # Also add with :latest suffix stripped for matching
+            if n.endswith(":latest"):
+                installed_names.add(n.replace(":latest", ""))
     except Exception:
         pass
     for item in catalog:
-        item["installed"] = item["name"] in installed_names or item["name"].split(":")[0] in installed_names
+        # Exact match only — don't match base name (gemma3:1b ≠ gemma3:4b)
+        item["installed"] = item["name"] in installed_names
     return {"catalog": catalog}
 
 
@@ -346,14 +363,14 @@ async def pull_model(req: PullModelRequest):
             q_.put(None)  # sentinel
 
     async def _stream():
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         loop.run_in_executor(None, _pull_sync)
 
         while True:
             try:
-                item = await asyncio.to_thread(q_.get, timeout=30)
+                item = await asyncio.to_thread(q_.get, timeout=300)
             except Exception:
-                yield f"data: {json.dumps({'status': 'error', 'message': 'Timeout'})}\n\n"
+                yield f"data: {json.dumps({'status': 'error', 'message': 'Download timeout'})}\n\n"
                 break
             if item is None:
                 break
@@ -375,7 +392,9 @@ async def set_model(req: SetModelRequest):
 
 @app.post("/vibe", response_model=PromptResponse)
 async def vibe(req: VibeRequest) -> PromptResponse:
-    # Rate limit check
+    request_id = uuid.uuid4().hex[:8]
+
+    # Rate limit check (per-endpoint, not per-client since localhost-only)
     if not _check_rate("vibe", _RATE_MAX_VIBE):
         return PromptResponse(
             prompt="⚠️ Rate limit exceeded. Please wait a moment before trying again.",
@@ -387,7 +406,7 @@ async def vibe(req: VibeRequest) -> PromptResponse:
     if family not in _GUIDES:
         family = "auto"
 
-    log.info("Vibe [%s]: %s", family, req.vibe[:100])
+    log.info("[%s] Vibe [%s]: %s", request_id, family, req.vibe[:100])
     t0 = time.monotonic()
 
     # ── 1. Security audit on raw vibe input ──────────────────────────
@@ -405,8 +424,16 @@ async def vibe(req: VibeRequest) -> PromptResponse:
     # ── 2. Scan workspace context ────────────────────────────────────
     ctx_hint = ""
     if req.workspace_path:
-        ctx = scan_workspace(req.workspace_path)
-        ctx_hint = _ctx(ctx)
+        # Validate workspace path: must exist and be a directory
+        from pathlib import Path
+        ws_path = Path(req.workspace_path).resolve()
+        if ws_path.is_dir() and not any(
+            part.startswith('.') for part in ws_path.parts[1:]
+        ):
+            ctx = scan_workspace(str(ws_path))
+            ctx_hint = _ctx(ctx)
+        else:
+            log.warning("[%s] Invalid workspace path: %s", request_id, req.workspace_path[:100])
 
     # ── 3. Generate prompt (AI-specific) ─────────────────────────────
     prompt = await _gen(req.vibe, ctx_hint, family)
@@ -422,10 +449,11 @@ async def vibe(req: VibeRequest) -> PromptResponse:
     # If quality is too low and model generated something, use optimized fallback
     if quality.total_score < 40 and len(prompt) > 20:
         log.warning("Quality too low (%.0f), upgrading with optimizer", quality.total_score)
+        lang_hint = ctx_hint.split("/")[0].strip() if ctx_hint else ""
         prompt = build_optimized_prompt(
             vibe=req.vibe, family=family,
             tech_stack=ctx_hint,
-            language_hint=ctx_hint,
+            language_hint=lang_hint,
         )
         quality = score_prompt_quality(prompt)
 
@@ -434,8 +462,8 @@ async def vibe(req: VibeRequest) -> PromptResponse:
 
     ms = int((time.monotonic() - t0) * 1000)
     log.info(
-        "Done %d chars / %dms / family=%s / quality=%s (%.0f) / fp=%s",
-        len(prompt), ms, family, quality.grade, quality.total_score, fp,
+        "[%s] Done %d chars / %dms / family=%s / quality=%s (%.0f) / fp=%s",
+        request_id, len(prompt), ms, family, quality.grade, quality.total_score, fp,
     )
 
     return PromptResponse(
@@ -487,9 +515,9 @@ async def _gen(vibe: str, ctx_hint: str, family: str) -> str:
             messages=messages,
             stream=False,
             options={
-                "num_predict": 512,
+                "num_predict": min(settings.OLLAMA_MAX_TOKENS, 768),
                 "temperature": settings.OLLAMA_TEMPERATURE,
-                "num_ctx": 1024,
+                "num_ctx": 2048,
             },
         )
 
@@ -560,14 +588,15 @@ def _fallback(vibe: str, ctx_hint: str, family: str) -> str:
     Uses build_optimized_prompt() from prompt_optimizer to produce
     world-class, AI-family-specific prompts even without the LLM.
     """
-    # Language-specific security rules for richer prompts
-    lang_security = get_language_security_rules(ctx_hint) if ctx_hint else ""
+    # Extract language from ctx_hint (format: "python / FastAPI")
+    lang_hint = ctx_hint.split("/")[0].strip() if ctx_hint else ""
+    lang_security = get_language_security_rules(lang_hint) if lang_hint else ""
 
     return build_optimized_prompt(
         vibe=vibe,
         family=family,
         tech_stack=ctx_hint,
-        language_hint=ctx_hint,
+        language_hint=lang_hint,
         extra_rules=lang_security,
     )
 

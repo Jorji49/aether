@@ -159,7 +159,7 @@ def audit_vibe(vibe: str, sampled_contents: str = "") -> AuditReport:
             )
 
     # ── 5. Vibe length sanity check ───────────────────────────────────
-    if len(vibe) > 4000:
+    if len(vibe) > 12000:
         report.findings.append(
             AuditFinding(
                 rule="vibe_too_long",

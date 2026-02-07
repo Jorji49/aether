@@ -2,7 +2,7 @@
   "name": "aether-prompt-generator",
   "displayName": "Aether Prompt Generator",
   "description": "Transform rough ideas into perfect AI prompts. Powered by local Ollama models - your data stays private.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "AhmetKayraKama",
   "icon": "media/aether-icon.png",
   "repository": {
@@ -111,10 +111,10 @@
         },
         "aether.ollamaMaxTokens": {
           "type": "number",
-          "default": 1024,
-          "description": "Maximum tokens for generated prompts. Recommended: 768-1024 for most tasks, 1536+ for complex prompts.",
-          "minimum": 256,
-          "maximum": 4096,
+          "default": 2048,
+          "description": "Maximum tokens for generated prompts. Recommended: 1024-2048 for most tasks, 3072+ for complex architecture prompts.",
+          "minimum": 512,
+          "maximum": 8192,
           "order": 6
         }
       }

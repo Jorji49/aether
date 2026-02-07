@@ -283,7 +283,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);display:flex;flex-
 .msg-u{background:var(--bg)}.msg-u .from{font-size:10px;font-weight:700;color:var(--t3);margin-bottom:6px;text-transform:uppercase;letter-spacing:.5px}.msg-u .body{font-size:13px;line-height:1.6;color:var(--t2)}
 .msg-a{background:var(--s1)}.msg-a .from{font-size:10px;font-weight:700;color:var(--t3);margin-bottom:8px;display:flex;justify-content:space-between;text-transform:uppercase;letter-spacing:.5px}.msg-a .from .time{font-weight:500;color:var(--t4);font-size:9px;text-transform:none;letter-spacing:0}
 
-.po{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:10px;font-family:var(--m);font-size:11px;line-height:1.9;color:var(--t2);white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;user-select:text}
+.po{background:var(--bg);border:1px solid var(--border);border-radius:var(--r);padding:14px 16px;margin-bottom:10px;font-family:var(--m);font-size:11px;line-height:1.9;color:var(--t2);white-space:pre-wrap;word-break:break-word;max-height:600px;overflow-y:auto;user-select:text}
 .po::-webkit-scrollbar{width:2px}.po::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
 .po .h{color:var(--t);font-weight:700}
 .meta{display:flex;gap:5px;margin-bottom:10px;flex-wrap:wrap}
@@ -318,7 +318,7 @@ body{font-family:var(--f);background:var(--bg);color:var(--t);display:flex;flex-
 /* ── Input ──────────────────────────── */
 .input-area{padding:12px 16px;border-top:1px solid var(--border);background:var(--bg)}
 .input-wrap{display:flex;gap:8px;align-items:flex-end}
-textarea{flex:1;background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;color:var(--t);font-size:13px;font-family:var(--f);resize:none;outline:none;min-height:40px;max-height:140px;line-height:1.5;transition:.15s}
+textarea{flex:1;background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:10px 14px;color:var(--t);font-size:13px;font-family:var(--f);resize:none;outline:none;min-height:40px;max-height:200px;line-height:1.5;transition:.15s}
 textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)}textarea:disabled{opacity:.3}
 .send{width:34px;height:34px;border-radius:50%;border:none;background:var(--t);color:var(--bg);cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:.15s}
 .send:hover:not(:disabled){opacity:.85}.send:disabled{opacity:.1;cursor:default}
@@ -534,7 +534,7 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   });
 
   /* ── Input & send ── */
-  I.addEventListener('input',function(){I.style.height='auto';I.style.height=Math.min(I.scrollHeight,140)+'px'});
+  I.addEventListener('input',function(){I.style.height='auto';I.style.height=Math.min(I.scrollHeight,200)+'px'});
   I.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();go()}});
   G.addEventListener('click',go);
   $('bStop').addEventListener('click',function(){vs.postMessage({command:'stop'})});

@@ -113,7 +113,7 @@ _FAMILY_NAMES: dict[str, str] = {
 
 
 class VibeRequest(BaseModel):
-    vibe: str = Field(..., min_length=1, max_length=8192)
+    vibe: str = Field(..., min_length=1, max_length=16384)
     workspace_path: str = Field("")
     agent: str = Field("auto")
 
@@ -214,7 +214,7 @@ async def score_prompt_endpoint(req: ScoreRequest):
 
 
 class OptimizeRequest(BaseModel):
-    vibe: str = Field(..., min_length=1, max_length=8192)
+    vibe: str = Field(..., min_length=1, max_length=16384)
     family: str = Field("auto")
     tech_stack: str = Field("")
     language: str = Field("")
@@ -515,9 +515,9 @@ async def _gen(vibe: str, ctx_hint: str, family: str) -> str:
             messages=messages,
             stream=False,
             options={
-                "num_predict": min(settings.OLLAMA_MAX_TOKENS, 768),
+                "num_predict": min(settings.OLLAMA_MAX_TOKENS, 2048),
                 "temperature": settings.OLLAMA_TEMPERATURE,
-                "num_ctx": 2048,
+                "num_ctx": 4096,
             },
         )
 
@@ -590,14 +590,15 @@ def _fallback(vibe: str, ctx_hint: str, family: str) -> str:
     """
     # Extract language from ctx_hint (format: "python / FastAPI")
     lang_hint = ctx_hint.split("/")[0].strip() if ctx_hint else ""
-    lang_security = get_language_security_rules(lang_hint) if lang_hint else ""
+    lang_rules = get_language_security_rules(lang_hint) if lang_hint else []
+    extra = "\n".join(f"- {r}" for r in lang_rules) if lang_rules else ""
 
     return build_optimized_prompt(
         vibe=vibe,
         family=family,
         tech_stack=ctx_hint,
         language_hint=lang_hint,
-        extra_rules=lang_security,
+        extra_rules=extra,
     )
 
 

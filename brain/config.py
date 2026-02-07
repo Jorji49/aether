@@ -31,8 +31,8 @@ class Settings:
     OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "gemma2:2b")
 
     # Max tokens for generated prompts.
-    # 1024 = good for most tasks. Increase for complex architecture prompts.
-    OLLAMA_MAX_TOKENS: int = int(os.getenv("OLLAMA_MAX_TOKENS", "1024"))
+    # 2048 = good balance for most tasks. Increase for complex architecture prompts.
+    OLLAMA_MAX_TOKENS: int = int(os.getenv("OLLAMA_MAX_TOKENS", "2048"))
 
     # Temperature (0.0-1.0). Lower = focused/consistent, Higher = creative/varied.
     # 0.1 is ideal for structured coding prompts.

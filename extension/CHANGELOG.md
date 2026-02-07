@@ -2,6 +2,13 @@
 
 All notable changes to the Aether extension will be documented in this file.
 
+## [1.0.1] - 2026-02-07
+
+### Fixed
+- Brain folder discovery now checks 5 locations including user home directory
+- Added manual folder picker when Brain is not found automatically
+- Translated all Turkish UI text to English
+
 ## [1.0.0] - 2026-02-07
 
 ### Added

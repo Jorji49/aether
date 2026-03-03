@@ -6,11 +6,15 @@
  */
 
 import * as vscode from "vscode";
+import * as fs from "fs";
+import * as path from "path";
+import * as cp from "child_process";
 import { SidebarProvider } from "./providers/SidebarProvider";
 import { BrainClient } from "./services/BrainClient";
 import { AetherConfig } from "./utils/config";
 
 let brainClient: BrainClient;
+let _healthInterval: ReturnType<typeof setInterval> | null = null;
 
 export function activate(context: vscode.ExtensionContext): void {
   brainClient = new BrainClient(AetherConfig.brainServerUrl);
@@ -38,93 +42,81 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("aether.startBrain", async () => {
-      // Find brain folder: try multiple locations
+      // Find brain folder — search bundled, workspace, and parent locations
       let brainPath = "";
-      const fs = await import("fs");
-      const path = await import("path");
       const hasBrain = (dir: string) => fs.existsSync(path.join(dir, "sslm_engine.py"));
 
-      // 1. Workspace root /brain
-      const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (ws && hasBrain(path.join(ws, "brain"))) {
-        brainPath = path.join(ws, "brain");
+      // 1. Bundled inside extension package (marketplace install)
+      const bundled = path.join(context.extensionUri.fsPath, "brain");
+      if (hasBrain(bundled)) { brainPath = bundled; }
+
+      // 2. Workspace folder (development)
+      if (!brainPath) {
+        const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (ws && hasBrain(path.join(ws, "brain"))) { brainPath = path.join(ws, "brain"); }
       }
 
-      // 2. Extension's parent directory /brain (dev mode)
+      // 3. Sibling of extension (monorepo)
       if (!brainPath) {
-        const extDir = context.extensionUri.fsPath;
-        const candidate = path.join(path.dirname(extDir), "brain");
+        const candidate = path.resolve(context.extensionUri.fsPath, "..", "brain");
         if (hasBrain(candidate)) { brainPath = candidate; }
       }
 
-      // 3. Extension's own directory /brain (bundled)
+      // 4. Walk up from extension dir
       if (!brainPath) {
-        const candidate = path.join(context.extensionUri.fsPath, "brain");
-        if (hasBrain(candidate)) { brainPath = candidate; }
+        let cur = path.resolve(context.extensionUri.fsPath);
+        for (let i = 0; i < 4 && !brainPath; i++) {
+          const c = path.join(cur, "brain");
+          if (hasBrain(c)) { brainPath = c; }
+          cur = path.dirname(cur);
+        }
       }
 
-      // 4. User home ~/aether/brain
-      if (!brainPath) {
-        const home = process.env.USERPROFILE || process.env.HOME || "";
-        const candidate = path.join(home, "aether", "brain");
-        if (hasBrain(candidate)) { brainPath = candidate; }
-      }
-
-      // 5. Ask the user to locate it manually
       if (!brainPath) {
         const pick = await vscode.window.showErrorMessage(
-          "Brain folder not found. Open the Aether project as your workspace, or select the brain folder manually.",
+          "Aether: Brain folder not found. Open the Aether project as your workspace.",
           "Browse..."
         );
         if (pick === "Browse...") {
           const result = await vscode.window.showOpenDialog({
-            canSelectFolders: true,
-            canSelectFiles: false,
-            canSelectMany: false,
+            canSelectFolders: true, canSelectFiles: false, canSelectMany: false,
             openLabel: "Select brain folder",
           });
           if (result?.[0]) {
             const sel = result[0].fsPath;
             if (hasBrain(sel)) { brainPath = sel; }
-            else {
-              vscode.window.showErrorMessage("Selected folder does not contain sslm_engine.py.");
-              return;
-            }
+            else { vscode.window.showErrorMessage("Selected folder does not contain sslm_engine.py."); return; }
           }
         }
-        if (!brainPath) { return; }
       }
+      if (!brainPath) { return; }
 
-      // ── Start Ollama in background if not already running ─────────
-      const isWin = process.platform === "win32";
+      // ── Python check ──────────────────────────────────────────────
+      const pythonCmd = process.platform === "win32" ? "python" : "python3";
       try {
-        const cp = await import("child_process");
-        if (isWin) {
-          // Silently start ollama serve in background (no window)
-          cp.exec('tasklist /FI "IMAGENAME eq ollama.exe" 2>nul | find /i "ollama.exe" >nul || start /B ollama serve', { windowsHide: true });
-        } else {
-          cp.exec('pgrep -x ollama > /dev/null 2>&1 || (ollama serve > /dev/null 2>&1 &)');
-        }
+        cp.execSync(`${pythonCmd} --version`, { timeout: 5000, stdio: "pipe" });
       } catch {
-        // Ollama start failed — Brain will show its own error
+        vscode.window.showErrorMessage(
+          "Aether requires Python 3.10+. Install Python from python.org and restart VS Code.",
+          "Download Python"
+        ).then(pick => {
+          if (pick === "Download Python") {
+            vscode.env.openExternal(vscode.Uri.parse("https://www.python.org/downloads/"));
+          }
+        });
+        return;
       }
 
-      // ── Start Brain server ────────────────────────────────────────
+      // Reuse Aether Brain terminal if already open (avoid duplicate servers)
       const existing = vscode.window.terminals.find(t => t.name === "Aether Brain");
-      const terminal = existing ?? vscode.window.createTerminal({
-        name: "Aether Brain",
-      });
-      terminal.show();
+      const terminal = existing ?? vscode.window.createTerminal({ name: "Aether Brain" });
 
+      const isWin = process.platform === "win32";
       const sep = isWin ? " ; " : " && ";
       const cdCmd = isWin ? `cd "${brainPath}"` : `cd '${brainPath}'`;
-      // Small delay to let Ollama start before Brain connects
-      const waitCmd = isWin ? "Start-Sleep -Seconds 2" : "sleep 2";
-      terminal.sendText(
-        `${cdCmd}${sep}pip install -r requirements.txt --quiet${sep}${waitCmd}${sep}python sslm_engine.py`
-      );
-      vscode.window.showInformationMessage("Starting Ollama + Brain server on :8420...");
-      sidebarProvider.updateBrainStatus(false, true); // starting state
+      // Install deps quietly, then start — model auto-downloads if needed
+      terminal.sendText(`${cdCmd}${sep}${pythonCmd} -m pip install -r requirements.txt --quiet${sep}${pythonCmd} sslm_engine.py`);
+      sidebarProvider.updateBrainStatus(false, true);
     })
   );
 
@@ -134,41 +126,48 @@ export function activate(context: vscode.ExtensionContext): void {
     })
   );
 
-  // ── Resilient Health Check ────────────────────────────────────────
-  // Requires 3 consecutive failures before showing offline.
-  // Recovers immediately on first success.
+  // ── Resilient Health Check + Auto-start ──────────────────────────
+  // On first activation: if brain is unreachable, auto-start it silently.
+  // During model setup: poll every 5 s and report download progress to UI.
   let failCount = 0;
   let wasOnline = false;
+  let _autoStarted = false;
   const MAX_FAILS = 3;
 
   async function doHealthCheck(): Promise<void> {
-    const ok = await brainClient.healthCheck();
-    if (ok) {
-      failCount = 0;
-      if (!wasOnline) {
+    try {
+      const h = await brainClient.healthCheck();
+      if (h.ok) {
+        failCount = 0;
         wasOnline = true;
         sidebarProvider.updateBrainStatus(true);
-      }
-    } else {
-      failCount++;
-      if (failCount >= MAX_FAILS && wasOnline) {
-        wasOnline = false;
+      } else if (h.setup) {
+        failCount = 0;
+        sidebarProvider.updateBrainStatus(false, true, h.setupPct, h.setupModel);
+      } else {
+        failCount++;
+        if (wasOnline && failCount >= MAX_FAILS) {
+          wasOnline = false;
+        }
         sidebarProvider.updateBrainStatus(false);
+        if (!_autoStarted && failCount >= 1) {
+          _autoStarted = true;
+          vscode.commands.executeCommand("aether.startBrain");
+        }
+      }
+    } catch {
+      failCount++;
+      sidebarProvider.updateBrainStatus(false);
+      if (!_autoStarted && failCount >= 1) {
+        _autoStarted = true;
+        vscode.commands.executeCommand("aether.startBrain");
       }
     }
   }
 
-  // Initial check
-  doHealthCheck().then(() => {
-    if (!wasOnline) {
-      sidebarProvider.updateBrainStatus(false);
-      vscode.window.showWarningMessage("Aether Brain offline. Run 'Aether: Start Brain Server'.");
-    }
-  });
-
-  // Periodic check — every 10 seconds
-  const healthInterval = setInterval(doHealthCheck, 10_000);
-  context.subscriptions.push({ dispose: () => clearInterval(healthInterval) });
+  doHealthCheck();
+  _healthInterval = setInterval(doHealthCheck, 5_000);
+  context.subscriptions.push({ dispose: () => { if (_healthInterval) { clearInterval(_healthInterval); _healthInterval = null; } } });
 
   console.log("[Aether] Activated — 100% local mode.");
 }
@@ -303,6 +302,7 @@ function delay(ms: number): Promise<void> {
 }
 
 export function deactivate(): void {
+  if (_healthInterval) { clearInterval(_healthInterval); _healthInterval = null; }
   brainClient?.abort();
   console.log("[Aether] Deactivated.");
 }

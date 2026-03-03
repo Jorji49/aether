@@ -1,8 +1,8 @@
 {
   "name": "aether-prompt-generator",
   "displayName": "Aether Prompt Generator",
-  "description": "Transform rough ideas into perfect AI prompts. Powered by local Ollama models - your data stays private.",
-  "version": "1.0.2",
+  "description": "Transform rough ideas into perfect AI prompts. 100% local, no API keys needed. Your data stays private.",
+  "version": "2.0.0",
   "publisher": "AhmetKayraKama",
   "icon": "media/aether-icon.png",
   "repository": {
@@ -29,12 +29,13 @@
   "keywords": [
     "ai",
     "prompt",
-    "ollama",
+    "prompt-engineering",
+    "local-ai",
+    "llm",
     "claude",
     "gpt",
     "gemini",
-    "prompt-engineering",
-    "local-ai",
+    "copilot",
     "privacy"
   ],
   "activationEvents": [],
@@ -81,10 +82,10 @@
           "description": "URL of the Aether Brain server. Change only if running Brain on a different machine or port.",
           "order": 1
         },
-        "aether.ollamaModel": {
+        "aether.model": {
           "type": "string",
-          "default": "gemma2:2b",
-          "description": "Ollama model used for prompt generation. Smaller models (gemma2:2b, gemma3:1b) are faster. Larger models (phi4, llama3.1:8b) produce higher quality prompts.",
+          "default": "llama3.2-1b",
+          "description": "Local GGUF model for prompt generation. Models auto-download on first use. Options: llama3.2-1b (fast), llama3.2-3b (recommended), phi3.5-mini, gemma2-2b.",
           "order": 2
         },
         "aether.maxContextFiles": {
@@ -101,7 +102,7 @@
           "description": "Automatically send the generated prompt to the AI agent after generation.",
           "order": 4
         },
-        "aether.ollamaTemperature": {
+        "aether.temperature": {
           "type": "number",
           "default": 0.1,
           "description": "Temperature for prompt generation (0.0-1.0). Lower = more focused. Recommended: 0.1 for coding prompts.",
@@ -109,7 +110,7 @@
           "maximum": 1,
           "order": 5
         },
-        "aether.ollamaMaxTokens": {
+        "aether.maxTokens": {
           "type": "number",
           "default": 2048,
           "description": "Maximum tokens for generated prompts. Recommended: 1024-2048 for most tasks, 3072+ for complex architecture prompts.",
@@ -124,8 +125,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "lint": "eslint src --ext ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

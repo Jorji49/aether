@@ -1,17 +1,19 @@
-/**
- * Aether — Sidebar Provider (Production v2.0)
- * Ollama-style UI with custom agent selector panel.
- * All event handlers use delegation — fully CSP-compliant.
+﻿/**
+ * Aether — Sidebar Provider (v4.0)
+ * Hardware-aware setup · Streaming token display · Quick-action chips
+ * o3/reasoning model support · Perfect prompt rendering
  */
 
 import * as vscode from "vscode";
-import { BrainClient, PromptResponse } from "../services/BrainClient";
+import { BrainClient, PromptResponse, HardwareProfileResponse, ContextResponse } from "../services/BrainClient";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "aether.vibePanel";
   private _view?: vscode.WebviewView;
-  private _selectedAgent = "auto";   // agent id
-  private _selectedFamily = "auto";  // family key for brain
+  private _selectedAgent = "auto";
+  private _selectedFamily = "auto";
+  private _selectedLangs: string[] = [];
+  private _cancelStream: (() => void) | null = null;
 
   constructor(
     private readonly _extUri: vscode.Uri,
@@ -27,23 +29,44 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true, localResourceRoots: [this._extUri] };
     view.webview.html = this._html(view.webview);
 
-    const setupDone = this._ctx.globalState.get<boolean>("aether.setupDone", false);
-    this._brain.healthCheck().then(ok => {
-      this._post({ command: "status", online: ok });
-      this._post({ command: "setAgent", agentId: this._selectedAgent, family: this._selectedFamily });
-      if (!setupDone || !ok) {
-        this._post({ command: "showSetup" });
-        if (ok) { this._loadAll(); }
-      }
+    // Re-scan languages when workspace becomes visible
+    view.onDidChangeVisibility(() => {
+      if (view.visible) { this._loadContext(); }
     });
-
-    const saved = this._ctx.globalState.get<string[]>("aether.h", []);
-    if (saved.length) { this._post({ command: "restore", h: saved }); }
 
     view.webview.onDidReceiveMessage(async (m) => {
       switch (m.command) {
+        case "ready": {
+          // Webview JS has loaded — safe to send initial state
+          const setupDone = this._ctx.globalState.get<boolean>("aether.setupDone", false);
+          this._brain.healthCheck().then(h => {
+            const ok = h.ok;
+            this._post({ command: "status", online: ok, starting: h.setup, setupPct: h.setupPct, setupModel: h.setupModel });
+            this._post({ command: "setAgent", agentId: this._selectedAgent, family: this._selectedFamily });
+            // Restore saved language selections
+            const savedLangs = this._ctx.globalState.get<string[]>("aether.langs", []);
+            if (savedLangs.length) {
+              this._selectedLangs = savedLangs;
+              this._post({ command: "restoreLangs", langs: savedLangs });
+            }
+            const saved = this._ctx.globalState.get<string[]>("aether.h", []);
+            if (saved.length) { this._post({ command: "restore", h: saved }); }
+            if (!setupDone || !ok) {
+              this._post({ command: "showSetup" });
+              if (ok) { this._loadAll(); }
+            }
+            if (ok) { this._loadContext(); }
+          }).catch(() => {
+            this._post({ command: "status", online: false });
+          });
+          break;
+        }
         case "vibe": await this.handleVibe(m.text); break;
-        case "stop": this._brain.abort(); this._post({ command: "stopped" }); break;
+        case "stop":
+          if (this._cancelStream) { this._cancelStream(); this._cancelStream = null; }
+          this._brain.abort();
+          this._post({ command: "stopped" });
+          break;
         case "copy":
           await vscode.env.clipboard.writeText(m.prompt);
           this._post({ command: "copied" });
@@ -54,7 +77,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           break;
         case "save": await this._ctx.globalState.update("aether.h", m.h); break;
         case "settings": vscode.commands.executeCommand("workbench.action.openSettings", "aether"); break;
+        case "setLangs":
+          this._selectedLangs = Array.isArray(m.langs) ? m.langs.slice(0, 10) : [];
+          await this._ctx.globalState.update("aether.langs", this._selectedLangs);
+          break;
         case "loadModels": await this._loadAll(); break;
+        case "loadHardware": await this._loadHardware(); break;
         case "selectModel": await this._selectModel(m.model); break;
         case "pullModel": await this._pullModel(m.model); break;
         case "finishSetup":
@@ -77,53 +105,67 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  public updateBrainStatus(online: boolean, starting: boolean = false): void {
-    this._post({ command: "status", online, starting });
+  public updateBrainStatus(online: boolean, starting: boolean = false, setupPct: number = 0, setupModel: string = ""): void {
+    this._post({ command: "status", online, starting, setupPct, setupModel });
   }
 
   public async handleVibe(vibe: string): Promise<void> {
     const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+
+    // Cancel any in-flight stream
+    if (this._cancelStream) {
+      this._cancelStream();
+      this._cancelStream = null;
+    }
+
     this._post({ command: "loading", on: true });
+
     try {
-      const r: PromptResponse = await this._brain.sendVibe(vibe, ws, this._selectedFamily);
-      this._post({
-        command: "result",
-        prompt: r.prompt,
-        ms: r.generation_time_ms,
-        model: r.model_used,
-        agent: r.agent_used,
-        quality: r.quality_score ?? 0,
-        grade: r.quality_grade ?? "",
-        security: r.security_verdict ?? "PASS",
-      });
-      const autoSend = vscode.workspace.getConfiguration("aether").get<boolean>("autoSendToAgent", false);
-      if (autoSend) {
-        await vscode.commands.executeCommand("aether.sendToAgent", r.prompt);
-      }
+      this._cancelStream = this._brain.sendVibeStream(
+        vibe, ws, this._selectedFamily, this._selectedLangs,
+        (event) => {
+          if (event.type === "token") {
+            this._post({ command: "token", text: event.text ?? "" });
+          } else if (event.type === "done" || event.type === "fallback") {
+            this._cancelStream = null;
+            const prompt = event.prompt ?? event.text ?? "";
+            this._post({
+              command: "result",
+              prompt,
+              ms: event.ms ?? 0,
+              model: event.model ?? "",
+              agent: event.agent ?? this._selectedFamily,
+              quality: event.quality ?? 0,
+              grade: event.grade ?? "",
+              security: event.security ?? "PASS",
+            });
+            const autoSend = vscode.workspace.getConfiguration("aether").get<boolean>("autoSendToAgent", false);
+            if (autoSend) {
+              vscode.commands.executeCommand("aether.sendToAgent", prompt);
+            }
+          } else if (event.type === "error") {
+            this._cancelStream = null;
+            this._post({ command: "err", msg: event.message ?? "Unknown error" });
+            this._post({ command: "loading", on: false });
+          } else if (event.type === "end") {
+            // Stream closed without a done/error event — unlock UI cleanly
+            this._cancelStream = null;
+            this._post({ command: "loading", on: false });
+          }
+        }
+      );
     } catch (e: unknown) {
       this._post({ command: "err", msg: e instanceof Error ? e.message : String(e) });
-    } finally {
       this._post({ command: "loading", on: false });
     }
   }
 
   // Static catalog — used as fallback when Brain is offline
   private static readonly FALLBACK_CATALOG = [
-    { name: "gemma3:4b", desc: "\u2B50 Best Pick \u2014 Great quality/speed balance.", size: "3.3 GB", installed: false },
-    { name: "gemma2:2b", desc: "\u26A1 Fast \u2014 Quick prompt generation, low RAM.", size: "1.6 GB", installed: false },
-    { name: "gemma3:1b", desc: "\u26A1 Ultra fast \u2014 Minimal RAM. Quick iterations.", size: "815 MB", installed: false },
-    { name: "qwen2.5:1.5b", desc: "Efficient multilingual. Turkish/English.", size: "986 MB", installed: false },
-    { name: "llama3.2:3b", desc: "Good speed/quality balance.", size: "2.0 GB", installed: false },
-    { name: "llama3.2:1b", desc: "Tiny, instant responses. Simple prompts.", size: "1.3 GB", installed: false },
-    { name: "codegemma:2b", desc: "Code specialist. Tech-aware prompts.", size: "1.6 GB", installed: false },
-    { name: "deepseek-r1:1.5b", desc: "Reasoning-focused. Logic-heavy prompts.", size: "1.1 GB", installed: false },
-    { name: "gemma2", desc: "Strong 7B. High quality, moderate speed.", size: "5.4 GB", installed: false },
-    { name: "phi4", desc: "Best reasoning. Top quality, needs 12GB+ RAM.", size: "9.1 GB", installed: false },
-    { name: "llama3.1:8b", desc: "Powerful 8B. Excellent quality, needs 8GB+ RAM.", size: "4.7 GB", installed: false },
-    { name: "mistral", desc: "Versatile 7B. Reliable quality.", size: "4.1 GB", installed: false },
-    { name: "qwen2.5:7b", desc: "Strong multilingual 7B. Non-English prompts.", size: "4.7 GB", installed: false },
-    { name: "deepseek-r1:7b", desc: "Advanced reasoning. Complex architectures.", size: "4.7 GB", installed: false },
-    { name: "codellama:7b", desc: "Code specialist 7B. Deep understanding.", size: "3.8 GB", installed: false },
+    { name: "llama3.2-3b", desc: "\u2B50 Recommended \u2014 Great quality/speed balance.", size: "2.0 GB", installed: false },
+    { name: "llama3.2-1b", desc: "\u26A1 Fast \u2014 Quick prompt generation, low RAM.", size: "1.3 GB", installed: false },
+    { name: "phi3.5-mini", desc: "Strong reasoning. High quality prompts.", size: "2.4 GB", installed: false },
+    { name: "gemma2-2b", desc: "Efficient multilingual. Good balance.", size: "1.6 GB", installed: false },
   ];
 
   private async _loadAll(): Promise<void> {
@@ -134,15 +176,37 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       ]);
       const cat = catalog.catalog?.length ? catalog.catalog : SidebarProvider.FALLBACK_CATALOG;
       this._post({ command: "allModels", installed: installed.models, current: installed.current, catalog: cat });
+      // Load hardware asynchronously
+      this._loadHardware().catch(() => {});
     } catch {
       this._post({ command: "allModels", installed: [], current: "", catalog: SidebarProvider.FALLBACK_CATALOG });
     }
   }
 
+  private async _loadHardware(): Promise<void> {
+    try {
+      const hw = await this._brain.getHardware();
+      this._post({ command: "hardware", data: hw });
+    } catch {
+      // Hardware profile unavailable — silently ignore
+    }
+  }
+
+  private async _loadContext(): Promise<void> {
+    const ws = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!ws) { return; }
+    try {
+      const res = await this._brain.scanContext(ws);
+      if (res.languages?.length) {
+        this._post({ command: "langs", langs: res.languages.slice(0, 5), tech: res.tech_stack });
+      }
+    } catch { /* silently ignore */ }
+  }
+
   private async _selectModel(model: string): Promise<void> {
     try {
       await this._brain.setModel(model);
-      await vscode.workspace.getConfiguration("aether").update("ollamaModel", model, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration("aether").update("model", model, vscode.ConfigurationTarget.Global);
       this._post({ command: "modelSet", model });
     } catch (e: unknown) {
       this._post({ command: "err", msg: e instanceof Error ? e.message : String(e) });
@@ -182,7 +246,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${wv.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${wv.cspSource}; style-src ${wv.cspSource} 'unsafe-inline'; script-src 'nonce-${n}';">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#000;--s1:#0a0a0a;--s2:#111;--s3:#1a1a1a;--border:#1a1a1a;--border2:#2a2a2a;--t:#fff;--t2:#b0b0b0;--t3:#666;--t4:#444;--ok:#22c55e;--err:#ef4444;--blue:#3b82f6;--r:10px;--f:-apple-system,'Segoe UI',system-ui,sans-serif;--m:'SF Mono','Cascadia Code','Fira Code',Consolas,monospace}
@@ -326,10 +390,24 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
 
 /* ── Footer ─────────────────────────── */
 .foot{padding:5px 16px 7px;font-size:9px;color:var(--t4);display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--border)}
-.foot-model{font-family:var(--m);cursor:pointer;padding:2px 6px;border-radius:4px;transition:.15s}
+.foot-left{display:flex;align-items:center;gap:6px;min-width:0;flex:1;overflow:hidden}
+.foot-model{font-family:var(--m);cursor:pointer;padding:2px 6px;border-radius:4px;transition:.15s;flex-shrink:0}
 .foot-model:hover{background:var(--s2);color:var(--t3)}
-
-/* ── Offline Banner ─────────────────── */
+.lang-pills{display:flex;gap:3px;flex-wrap:nowrap;overflow:hidden}
+.lp{padding:1px 5px;border-radius:4px;font-size:8px;font-weight:600;font-family:var(--m);color:var(--t4);background:var(--s2);white-space:nowrap;border:1px solid var(--border)}
+/* ── Lang Bar ──────────────────── */
+.lb{border-bottom:1px solid var(--border);background:var(--bg);position:relative}
+.lb-inner{padding:5px 14px;display:flex;align-items:center;gap:4px;overflow-x:auto;overflow-y:visible}
+.lb-inner::-webkit-scrollbar{display:none}
+.lc{padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--t4);background:transparent;font-size:10px;font-weight:500;font-family:var(--m);cursor:pointer;transition:.12s;white-space:nowrap;user-select:none;flex-shrink:0}
+.lc:hover{border-color:var(--border2);color:var(--t2)}
+.lc.on{border-color:var(--blue);color:var(--blue);background:rgba(59,130,246,.1)}
+.lc.lc-add{border-style:dashed;font-size:13px;padding:0 8px;line-height:20px}
+.lb-panel{position:absolute;top:100%;left:0;right:0;background:var(--s1);border:1px solid var(--border2);border-top:none;z-index:200;max-height:0;overflow:hidden;opacity:0;transition:max-height .2s ease,opacity .15s;box-shadow:0 12px 40px rgba(0,0,0,.7)}
+.lb-panel.open{max-height:180px;opacity:1;overflow-y:auto}
+.lb-panel::-webkit-scrollbar{width:3px}.lb-panel::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+.lb-panel-inner{padding:8px 12px;display:flex;flex-wrap:wrap;gap:5px}
+/* ── Offline Banner & Setup Progress ─────────── */
 .offline-banner{display:none;padding:16px 20px;background:linear-gradient(135deg,var(--s1),var(--s2));border-bottom:1px solid var(--border);text-align:center;animation:fi .2s ease}
 .offline-banner.show{display:block}
 .offline-banner .ob-icon{margin-bottom:8px;color:var(--t4)}
@@ -340,6 +418,11 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
 .start-brain-btn:disabled{opacity:.4;cursor:default}
 .start-brain-btn.starting{background:var(--blue);color:#fff}
 .start-brain-btn svg{width:14px;height:14px}
+/* Download progress */
+.setup-progress{margin-top:8px}
+.sp-label{font-size:11px;color:var(--t3);margin-bottom:6px}
+.sp-track{height:4px;background:var(--border2);border-radius:2px;overflow:hidden}
+.sp-fill{height:100%;background:var(--blue);border-radius:2px;transition:width .4s ease;width:0%}\n/* Streaming cursor */\n.streaming .stream-text::after{content:'\\u258C';animation:blink 1s step-end infinite;color:var(--blue)}\n@keyframes blink{50%{opacity:0}}
 </style>
 </head>
 <body>
@@ -362,12 +445,18 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   <div class="ap" id="AP"></div>
 </div>
 
+<!-- Language Bar -->
+<div class="lb" id="LB">
+  <div class="lb-inner" id="LBI"></div>
+  <div class="lb-panel" id="LBP"></div>
+</div>
+
 <!-- Setup View -->
 <div class="view" id="V_SETUP">
   <div class="setup">
     <div class="setup-logo">${L56}</div>
     <h2>Welcome to Aether</h2>
-    <p class="sub">Local AI prompt optimizer powered by Ollama.<br/>Select a model below — smaller models are faster, larger models produce better prompts.</p>
+    <p class="sub">100% local AI prompt optimizer.<br/>Select a model below — smaller models are faster, larger models produce better prompts.</p>
     <div class="tabs">
       <button class="tab active" data-tab="installed">Installed</button>
       <button class="tab" data-tab="available">Available</button>
@@ -379,15 +468,19 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
       <div class="model-list" id="ML_AVAIL"><div class="setup-msg">Loading...</div></div>
     </div>
     <button class="setup-btn" id="setupDone" disabled>Get Started</button>
-    <p class="setup-tip">Ollama must be running. Models are stored locally.</p>
+    <p class="setup-tip">Models are stored locally in ~/.aether/models/</p>
   </div>
 </div>
 
 <!-- Offline Banner -->
 <div class="offline-banner" id="OB">
-  <div class="ob-icon"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div>
-  <div class="ob-title">Brain Server Offline</div>
-  <div class="ob-desc">Aether Brain server is not running.<br/>Click below to start it.</div>
+  <div class="ob-icon" id="OB_ICON"><svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div>
+  <div class="ob-title" id="OB_TITLE">Brain Server Offline</div>
+  <div class="ob-desc" id="OB_DESC">Aether Brain is not running.<br/>It will start automatically when found.</div>
+  <div class="setup-progress" id="OB_PROG" style="display:none">
+    <div class="sp-label" id="OB_PROG_LBL">Downloading model... 0%</div>
+    <div class="sp-track"><div class="sp-fill" id="OB_PROG_FILL"></div></div>
+  </div>
   <button class="start-brain-btn" id="bStartBrain">
     <svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
     <span id="bStartTxt">Start Brain Server</span>
@@ -417,8 +510,8 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
 </div>
 
 <div class="foot">
-  <span>100% Local</span>
-  <span class="foot-model" id="FM" title="Change model">ollama</span>
+  <div class="foot-left"><span>100% Local</span></div>
+  <span class="foot-model" id="FM" title="Change model">aether</span>
 </div>
 
 <script nonce="${n}">
@@ -426,11 +519,75 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   var vs=acquireVsCodeApi();
   function $(id){return document.getElementById(id)}
   var F=$('F'),E=$('E'),I=$('I'),G=$('G'),LDR=$('LDR'),LTM=$('LTM'),D=$('D'),SL=$('SL'),FM=$('FM');
+  var LB=$('LB'),LBI=$('LBI'),LBP=$('LBP');
   var VS=$('V_SETUP'),VC=$('V_CHAT'),OB=$('OB');
   var AB=$('AB'),AP=$('AP'),AW=$('AW');
   var brainStarting=false;
   var busy=0,ti=null,t0=0,hist=[],selModel='';
   var curAgent='auto',curFamily='auto',panelOpen=false;
+  var selLangs=[],detectedLangs=[],lbOpen=false;
+
+  /* ── All known languages for the picker panel ── */
+  var ALL_LANGS=['Python','JavaScript','TypeScript','Java','Kotlin','C#','C++','C','Go','Rust',
+    'PHP','Ruby','Swift','Dart','SQL','HTML','CSS','SCSS','Shell','React',
+    'Vue','Svelte','Next.js','Angular','Django','FastAPI','Spring','Flutter','Terraform','GraphQL'];
+
+  /* ── Lang bar rendering ── */
+  function renderLangBar(){
+    LBI.innerHTML='';
+    // All chips: detected + any manually added not in detected
+    var shown=detectedLangs.slice();
+    selLangs.forEach(function(l){if(shown.indexOf(l)<0)shown.push(l);});
+    shown.forEach(function(l){
+      var c=document.createElement('span');
+      c.className='lc'+(selLangs.indexOf(l)>=0?' on':'');
+      c.textContent=l;
+      c.addEventListener('click',function(){toggleLang(l);});
+      LBI.appendChild(c);
+    });
+    var add=document.createElement('span');
+    add.className='lc lc-add';add.title='Add language';add.textContent='+';
+    add.addEventListener('click',function(e){e.stopPropagation();toggleLBPanel();});
+    LBI.appendChild(add);
+    // Update placeholder
+    var ph=selLangs.length?'Message Aether... ['+selLangs.slice(0,3).join(', ')+']':'Message Aether...';
+    I.placeholder=ph;
+  }
+
+  function toggleLang(l){
+    var idx=selLangs.indexOf(l);
+    if(idx>=0)selLangs.splice(idx,1);else selLangs.push(l);
+    renderLangBar();
+    if(lbOpen)renderLBPanel();
+    vs.postMessage({command:'setLangs',langs:selLangs});
+  }
+
+  function renderLBPanel(){
+    var h='<div class="lb-panel-inner">';
+    ALL_LANGS.forEach(function(l){
+      var on=selLangs.indexOf(l)>=0;
+      h+='<span class="lc'+(on?' on':'')
+        +'" data-lp="'+escAttr(l)+'">'+esc(l)+'</span>';
+    });
+    h+='</div>';
+    LBP.innerHTML=h;
+  }
+
+  function toggleLBPanel(){
+    lbOpen=!lbOpen;
+    if(lbOpen){renderLBPanel();LBP.classList.add('open');}else{LBP.classList.remove('open');}
+  }
+
+  LBP.addEventListener('click',function(e){
+    var c=e.target.closest('[data-lp]');
+    if(!c)return;
+    toggleLang(c.getAttribute('data-lp'));
+  });
+
+  document.addEventListener('click',function(e){
+    if(panelOpen&&!e.target.closest('.aw'))closePanel();
+    if(lbOpen&&!e.target.closest('.lb')){lbOpen=false;LBP.classList.remove('open');}
+  });
 
   /* ── Agent data (matches Cursor's model list exactly) ── */
   var AG=[
@@ -519,11 +676,6 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
     vs.postMessage({command:'selectAgent',agentId:curAgent,family:curFamily});
   });
 
-  document.addEventListener('click',function(e){
-    if(panelOpen&&!e.target.closest('.aw'))closePanel();
-  });
-
-  /* ── Tabs (setup) ── */
   document.querySelectorAll('.tab').forEach(function(t){
     t.addEventListener('click',function(){
       document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('active')});
@@ -609,6 +761,21 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
 
   function save(){vs.postMessage({command:'save',h:hist.slice(-20)})}
 
+  /* ── Streaming token display ── */
+  var _streamEl=null,_streamBuf='';
+  function streamToken(t){
+    if(!_streamEl){
+      _streamEl=document.createElement('div');_streamEl.className='msg msg-a streaming';
+      var now=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+      _streamEl.innerHTML='<div class="from"><span>Aether</span><span class="time">'+now+'</span></div><div class="po stream-text"></div>';
+      E.style.display='none';F.appendChild(_streamEl);
+    }
+    _streamBuf+=t;
+    _streamEl.querySelector('.stream-text').innerHTML=hl(_streamBuf);
+    sb();
+  }
+  function finishStream(){_streamEl=null;_streamBuf='';}
+
   /* ── Event delegation: Copy / Send to Agent ── */
   F.addEventListener('click',function(e){
     var btn=e.target.closest('[data-action]');
@@ -645,14 +812,16 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
     var c=$('ML_INST');c.innerHTML='';
     if(!models.length){c.innerHTML='<div class="setup-msg">No models installed.<br/>Switch to <b>Available</b> tab to download.</div>';return}
     models.forEach(function(m){
-      var el=document.createElement('div');el.className='mi'+(m.name===current?' selected':'');
+      var mid=m.id||m.name;
+      var label=m.name||m.id||mid;
+      var el=document.createElement('div');el.className='mi'+(mid===current?' selected':'');
       var sz=m.size_mb>1024?(m.size_mb/1024).toFixed(1)+' GB':m.size_mb+' MB';
-      el.innerHTML='<div class="mi-info"><div class="mi-name">'+esc(m.name)+'</div></div><div class="mi-size">'+sz+'</div><div class="mi-check"></div>';
+      el.innerHTML='<div class="mi-info"><div class="mi-name">'+esc(label)+'</div></div><div class="mi-size">'+sz+'</div><div class="mi-check"></div>';
       el.addEventListener('click',function(){
         document.querySelectorAll('#ML_INST .mi').forEach(function(x){x.classList.remove('selected')});
-        el.classList.add('selected');selModel=m.name;$('setupDone').disabled=false;
+        el.classList.add('selected');selModel=mid;$('setupDone').disabled=false;
       });
-      if(m.name===current){selModel=m.name;$('setupDone').disabled=false}
+      if(mid===current){selModel=mid;$('setupDone').disabled=false}
       c.appendChild(el);
     });
   }
@@ -661,11 +830,12 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
     var c=$('ML_AVAIL');c.innerHTML='';
     if(!catalog||!catalog.length){c.innerHTML='<div class="setup-msg">Could not load model catalog.</div>';return}
     catalog.forEach(function(m){
+      var mid=m.id||m.name;
       var el=document.createElement('div');el.className='mi';
       var act='';
       if(m.installed){act='<div class="mi-action"><span class="dl-btn done">Installed</span></div>'}
-      else{act='<div class="mi-action"><button class="dl-btn" data-pull="'+escAttr(m.name)+'">Download</button></div>'}
-      el.innerHTML='<div class="mi-info"><div class="mi-name">'+esc(m.name)+'</div><div class="mi-desc">'+esc(m.desc)+'</div></div><div class="mi-size">'+esc(m.size)+'</div>'+act;
+      else{act='<div class="mi-action"><button class="dl-btn" data-pull="'+escAttr(mid)+'">Download</button></div>'}
+      el.innerHTML='<div class="mi-info"><div class="mi-name">'+esc(m.name||mid)+'</div><div class="mi-desc">'+esc(m.desc)+'</div></div><div class="mi-size">'+esc(m.size)+'</div>'+act;
       c.appendChild(el);
     });
   }
@@ -673,22 +843,58 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
   /* ── Messages from extension ── */
   window.addEventListener('message',function(e){
     var m=e.data;
-    if(m.command==='result'){addP(m.prompt,m.ms,m.model,m.agent,m.quality,m.grade,m.security);unlock()}
-    else if(m.command==='err'){addE(m.msg);unlock()}
-    else if(m.command==='stopped'){unlock()}
-    else if(m.command==='loading'&&!m.on){unlock()}
+    if(m.command==='token'){streamToken(m.text)}
+    else if(m.command==='result'){finishStream();addP(m.prompt,m.ms,m.model,m.agent,m.quality,m.grade,m.security);unlock()}
+    else if(m.command==='err'){finishStream();addE(m.msg);unlock()}
+    else if(m.command==='stopped'){finishStream();unlock()}
+    else if(m.command==='loading'&&!m.on){finishStream();unlock()}
     else if(m.command==='status'){
-      D.className='dot '+(m.online?'on':'off');
-      SL.textContent=m.online?'Connected':(m.starting?'Starting...':'Offline');
+      var isSetup=m.starting&&m.setupPct>=0;
       if(m.online){
+        // Connected
+        D.className='dot on';
+        SL.textContent='Connected';
         OB.classList.remove('show');
+        $('OB_PROG').style.display='none';
         brainStarting=false;
         var btn=$('bStartBrain');
         btn.classList.remove('starting');
         btn.disabled=false;
         $('bStartTxt').textContent='Start Brain Server';
-      } else if(!m.starting){
+      } else if(m.starting){
+        // Downloading / starting
+        D.className='dot';
+        var pct=m.setupPct||0;
+        var mdl=m.setupModel||'';
+        if(pct>0){
+          SL.textContent='Downloading '+pct+'%';
+          $('OB_TITLE').textContent='Downloading Model';
+          $('OB_DESC').textContent=(mdl?mdl+' — ':'')+'This happens once. Please wait…';
+          $('OB_PROG').style.display='';
+          $('OB_PROG_LBL').textContent='Downloading model… '+pct+'%';
+          $('OB_PROG_FILL').style.width=pct+'%';
+        } else {
+          SL.textContent='Starting…';
+          $('OB_TITLE').textContent='Starting Brain Server';
+          $('OB_DESC').textContent='Aether is starting in the background…';
+          $('OB_PROG').style.display='none';
+        }
         OB.classList.add('show');
+        $('bStartBrain').classList.add('starting');
+        $('bStartBrain').disabled=true;
+        $('bStartTxt').textContent='Starting…';
+      } else {
+        D.className='dot off';
+        SL.textContent='Offline';
+        $('OB_TITLE').textContent='Brain Server Offline';
+        $('OB_DESC').textContent='Aether Brain is not running.<br/>It will start automatically when found.';
+        $('OB_PROG').style.display='none';
+        OB.classList.add('show');
+        brainStarting=false;
+        var btn2=$('bStartBrain');
+        btn2.classList.remove('starting');
+        btn2.disabled=false;
+        $('bStartTxt').textContent='Start Brain Server';
       }
     }
     else if(m.command==='showSetup'){showView('setup');vs.postMessage({command:'loadModels'})}
@@ -698,6 +904,19 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
       if(m.current)FM.textContent=m.current;
     }
     else if(m.command==='modelSet'){FM.textContent=m.model}
+    else if(m.command==='langs'){
+      detectedLangs=m.langs||[];
+      // Pre-select detected languages only if user hasn\'t made manual changes yet
+      if(selLangs.length===0){
+        selLangs=detectedLangs.slice();
+        vs.postMessage({command:'setLangs',langs:selLangs});
+      }
+      renderLangBar();
+    }
+    else if(m.command==='restoreLangs'){
+      selLangs=m.langs||[];
+      renderLangBar();
+    }
     else if(m.command==='setAgent'){
       curAgent=m.agentId||'auto';
       curFamily=m.family||'auto';
@@ -730,7 +949,15 @@ textarea:focus{border-color:var(--border2)}textarea::placeholder{color:var(--t4)
     }
   });
 
-  /* Init */
+  /* Init — signal extension host that JS is ready */
+  var _gotStatus=false;
+  window.addEventListener('message',function _statusWatcher(e){
+    if(e.data&&e.data.command==='status'){_gotStatus=true}
+  });
+  vs.postMessage({command:'ready'});
+  setTimeout(function(){if(!_gotStatus){vs.postMessage({command:'ready'})}},3000);
+  setTimeout(function(){if(!_gotStatus){vs.postMessage({command:'ready'})}},8000);
+  renderLangBar();
   updateBar();
 })();
 </script>

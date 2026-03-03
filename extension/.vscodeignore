@@ -8,3 +8,9 @@ tsconfig.json
 !**/*.d.ts
 node_modules/**
 *.vsix
+__temp*.js
+brain/__pycache__/**
+brain/tests/**
+**/*.pyc
+.eslintrc*
+eslint.config.*

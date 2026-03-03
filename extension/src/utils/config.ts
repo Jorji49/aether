@@ -20,8 +20,8 @@ export const AetherConfig = {
     return getConfig("brainServerUrl", "http://127.0.0.1:8420");
   },
 
-  get ollamaModel(): string {
-    return getConfig("ollamaModel", "gemma2:2b");
+  get model(): string {
+    return getConfig("model", "llama3.2-1b");
   },
 
   get maxContextFiles(): number {
@@ -30,5 +30,13 @@ export const AetherConfig = {
 
   get autoSendToAgent(): boolean {
     return getConfig("autoSendToAgent", false);
+  },
+
+  get temperature(): number {
+    return getConfig("temperature", 0.1);
+  },
+
+  get maxTokens(): number {
+    return getConfig("maxTokens", 2048);
   },
 } as const;

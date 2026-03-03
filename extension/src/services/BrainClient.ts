@@ -1,6 +1,6 @@
 /**
  * Aether — Brain Client
- * HTTP client for the local Python Brain (FastAPI + Ollama).
+ * HTTP client for the local Python Brain (FastAPI + llama-cpp-python).
  * Health checks use separate connections and never interfere with active requests.
  */
 
@@ -23,13 +23,13 @@ export interface AgentInfo {
   name: string;
 }
 
-export interface OllamaModel {
+export interface LocalModel {
   name: string;
   size_mb: number;
 }
 
 export interface ModelsResponse {
-  models: OllamaModel[];
+  models: LocalModel[];
   current: string;
   error?: string;
 }
@@ -45,6 +45,64 @@ export interface CatalogResponse {
   catalog: CatalogModel[];
 }
 
+export interface HardwareRec {
+  name: string;
+  reason: string;
+  tier: "optimal" | "fast" | "quality" | string;
+  quality_tier: number;
+  speed_tier: number;
+  ram_required: string;
+  already_installed: boolean;
+}
+
+export interface HardwareInfo {
+  os: string;
+  cpu: string;
+  cpu_cores: number;
+  cpu_physical: number;
+  ram_gb: number;
+  gpu: string;
+  vram_gb: number;
+  has_cuda: boolean;
+  has_metal: boolean;
+}
+
+export interface HardwareProfileResponse {
+  hardware: HardwareInfo;
+  recommendations: HardwareRec[];
+  warning: string;
+  summary: string;
+}
+
+export interface ContextResponse {
+  languages: string[];
+  tech_stack: string;
+  manifest: string;
+}
+
+export interface HealthStatus {
+  ok: boolean;           // brain is reachable and model is loaded
+  setup: boolean;        // brain is running but still setting up (downloading/loading model)
+  setupPct: number;      // 0-100 download progress
+  setupModel: string;    // model being downloaded
+  setupError: boolean;   // setup failed
+  error: string;
+}
+
+export type StreamCallback = (event: {
+  type: "token" | "done" | "error" | "fallback" | "end";
+  text?: string;
+  prompt?: string;
+  ms?: number;
+  model?: string;
+  agent?: string;
+  quality?: number;
+  grade?: string;
+  security?: string;
+  fingerprint?: string;
+  message?: string;
+}) => void;
+
 export class BrainClient {
   private _baseUrl: string;
   /** Only tracks the main vibe request (for abort). */
@@ -59,33 +117,130 @@ export class BrainClient {
 
   /**
    * Health check with port discovery.
-   * If the configured port fails, tries ports 8420-8429 to find the Brain.
+   * Returns rich HealthStatus so the UI can show setup/download progress.
    */
-  public async healthCheck(): Promise<boolean> {
+  public async healthCheck(): Promise<HealthStatus> {
+    const _check = async (baseOverride?: string): Promise<HealthStatus> => {
+      const res = await this._fire<{
+        status: string;
+        setup_pct?: number;
+        setup_model?: string;
+        setup_status?: string;
+        error?: string;
+      }>("GET", "/health", undefined, BrainClient.HEALTH_TIMEOUT_MS, baseOverride);
+
+      if (res.status === "ok") {
+        return { ok: true, setup: false, setupPct: 100, setupModel: "", setupError: false, error: "" };
+      }
+      if (res.status === "setup") {
+        return { ok: false, setup: true, setupPct: res.setup_pct ?? 0, setupModel: res.setup_model ?? "", setupError: false, error: "" };
+      }
+      if (res.status === "setup_error") {
+        return { ok: false, setup: false, setupPct: 0, setupModel: "", setupError: true, error: res.error ?? "Setup failed" };
+      }
+      return { ok: false, setup: false, setupPct: 0, setupModel: "", setupError: false, error: "" };
+    };
+
     try {
-      const res = await this._fire<{ status: string }>("GET", "/health", undefined, BrainClient.HEALTH_TIMEOUT_MS);
-      return res.status === "ok";
+      return await _check();
     } catch {
       // Port discovery: Brain may have started on an alternate port
       const base = new URL(this._baseUrl);
       const basePort = parseInt(base.port || "8420", 10);
-      for (let p = basePort; p < basePort + 10; p++) {
-        if (p === basePort) { continue; } // already tried
+      for (let p = basePort + 1; p < basePort + 10; p++) {
         const tryUrl = `${base.protocol}//${base.hostname}:${p}`;
         try {
-          const res = await this._fire<{ status: string }>("GET", "/health", undefined, BrainClient.HEALTH_TIMEOUT_MS, tryUrl);
-          if (res.status === "ok") {
+          const h = await _check(tryUrl);
+          if (h.ok || h.setup) {
             this._baseUrl = tryUrl;
-            return true;
+            return h;
           }
         } catch { /* try next */ }
       }
-      return false;
+      return { ok: false, setup: false, setupPct: 0, setupModel: "", setupError: false, error: "unreachable" };
     }
   }
 
   public async sendVibe(vibe: string, workspacePath: string, agent: string = "auto"): Promise<PromptResponse> {
     return this._fetchTracked<PromptResponse>("POST", "/vibe", { vibe, workspace_path: workspacePath, agent });
+  }
+
+  /**
+   * Stream vibe via SSE. Calls onEvent for each token/done/error event.
+   * Returns a cancel function — call it to abort the stream.
+   */
+  public sendVibeStream(
+    vibe: string,
+    workspacePath: string,
+    agent: string,
+    languages: string[],
+    onEvent: StreamCallback
+  ): () => void {
+    const url = new URL(this._baseUrl + "/vibe/stream");
+    const payload = JSON.stringify({ vibe, workspace_path: workspacePath, agent, languages });
+
+    const options: http.RequestOptions = {
+      hostname: url.hostname,
+      port: url.port || "8420",
+      path: url.pathname,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        "Content-Length": Buffer.byteLength(payload).toString(),
+      },
+      timeout: BrainClient.TIMEOUT_MS,
+    };
+
+    let buffer = "";
+    let doneSeen = false;
+    // Watchdog: if no completion/error within TIMEOUT_MS, fire a synthetic 'end'
+    const watchdog = setTimeout(() => {
+      if (!doneSeen) { onEvent({ type: "end" }); req.destroy(); }
+    }, BrainClient.TIMEOUT_MS);
+
+    const req = http.request(options, (res) => {
+      res.setEncoding("utf8");
+      res.on("data", (chunk: string) => {
+        buffer += chunk;
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const line = block.trim();
+          if (!line.startsWith("data: ")) { continue; }
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.type === "done" || data.type === "error" || data.type === "fallback") {
+              doneSeen = true;
+              clearTimeout(watchdog);
+            }
+            onEvent(data);
+          } catch { /* ignore malformed */ }
+        }
+      });
+      res.on("end", () => {
+        clearTimeout(watchdog);
+        if (!doneSeen) { onEvent({ type: "end" }); }
+      });
+    });
+
+    req.on("error", (err) => {
+      clearTimeout(watchdog);
+      onEvent({ type: "error", message: err.message });
+    });
+
+    req.write(payload);
+    req.end();
+
+    return () => { clearTimeout(watchdog); req.destroy(); };
+  }
+
+  public async getHardware(): Promise<HardwareProfileResponse> {
+    return this._fire<HardwareProfileResponse>("GET", "/hardware", undefined, 15_000);
+  }
+
+  public async scanContext(workspacePath: string): Promise<ContextResponse> {
+    return this._fire<ContextResponse>("POST", "/context", { workspace_path: workspacePath }, 12_000);
   }
 
   public async listAgents(): Promise<{ agents: AgentInfo[] }> {
@@ -105,7 +260,7 @@ export class BrainClient {
   }
 
   /**
-   * Pull (download) a model from Ollama with SSE progress events.
+   * Pull (download) a GGUF model with SSE progress events.
    * Calls onProgress with percentage (0-100) during download.
    * Returns final status when complete.
    */

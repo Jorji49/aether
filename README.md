@@ -93,12 +93,20 @@ Grade scale: **A+** (90+), **A** (80–89), **B** (70–79), **C** (60–69), **
 
 MIT License — see [LICENSE.md](LICENSE.md)
 
+## Support
+
+If you find Aether useful, consider supporting the project:
+
+<a href="https://www.buymeacoffee.com/AhmetKayraKama" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-blue.png" alt="Buy Me A Coffee" height="40"></a>
+
+[![Sponsor on GitHub](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?logo=github)](https://github.com/sponsors/Jorji49)
+
 ## Acknowledgments
 
 Built on top of:
 
-- [Ollama](https://ollama.ai) — Local LLM runtime
+- [llama-cpp-python](https://github.com/abetlhen/llama-cpp-python) — Local GGUF inference
 - [FastAPI](https://fastapi.tiangolo.com) — Backend framework
 - Prompt patterns from [prompts.chat](https://prompts.chat) community
 
-Made with love by AhmetKayraKama
+Made with ❤️ by [Ahmet Kayra Kama](https://github.com/Jorji49)
